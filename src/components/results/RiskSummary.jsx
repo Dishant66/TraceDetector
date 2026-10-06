@@ -11,7 +11,7 @@ export default function RiskSummary({ analysis }) {
   const total = Math.max(1, risk.total)
 
   return (
-    <section className="risk card card-pad">
+    <section className={`risk card card-pad sev-${risk.level}`}>
       <div className="risk-top">
         <div>
           <span className="badge badge-engine" data-engine={engine}>

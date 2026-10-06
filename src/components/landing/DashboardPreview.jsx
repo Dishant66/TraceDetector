@@ -57,7 +57,7 @@ export default function DashboardPreview() {
           <span className="preview-title">Privacy Report · onboarding-screenshot.png</span>
           <span className="badge badge-engine">
             <Icon name="sparkle" size={12} />
-            AI Analysis
+            Illustrative report
           </span>
         </div>
 
