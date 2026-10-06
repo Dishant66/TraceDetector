@@ -5,48 +5,37 @@
  * the client, never returned by any endpoint and never logged.
  *
  * Supported environment variables (see .env.example):
- *   TRACEDETECTOR_AI_API_KEY   - required to enable real AI analysis
- *   TRACEDETECTOR_AI_BASE_URL  - OpenAI-compatible base URL (default: OpenAI)
- *   TRACEDETECTOR_AI_MODEL     - vision-capable model id
+ *   TRACEDETECTOR_AI_API_KEY   - required to enable real AI analysis (Google Gemini)
+ *   TRACEDETECTOR_AI_MODEL     - a Gemini multimodal/vision-capable model id
+ *
+ * `GEMINI_API_KEY` / `GEMINI_MODEL` are also accepted as a fallback for
+ * compatibility with deployments that already set the plain Gemini names.
+ * `TRACEDETECTOR_AI_*` takes precedence when both are present.
  */
 
-const DEFAULT_BASE_URL = 'https://api.openai.com/v1'
-const DEFAULT_MODEL = 'gpt-4o-mini'
+// A broadly-available, vision-capable Flash model. Kept as a fallback only —
+// the model actually used is always read from TRACEDETECTOR_AI_MODEL so it
+// can be changed without touching any code if a given key/account cannot
+// access it.
+const DEFAULT_MODEL = 'gemini-2.5-flash'
 
 export function readAiConfig(env = process.env) {
-  const apiKey =
-    env.TRACEDETECTOR_AI_API_KEY || env.OPENAI_API_KEY || env.AI_API_KEY || ''
-
-  const baseUrl = (
-    env.TRACEDETECTOR_AI_BASE_URL ||
-    env.OPENAI_BASE_URL ||
-    DEFAULT_BASE_URL
-  ).replace(/\/+$/, '')
-
-  const model = env.TRACEDETECTOR_AI_MODEL || env.OPENAI_MODEL || DEFAULT_MODEL
+  const apiKey = (env.TRACEDETECTOR_AI_API_KEY || env.GEMINI_API_KEY || '').trim()
+  const model = (env.TRACEDETECTOR_AI_MODEL || env.GEMINI_MODEL || '').trim() || DEFAULT_MODEL
 
   return {
-    apiKey: apiKey.trim(),
-    baseUrl,
+    apiKey,
     model,
-    configured: Boolean(apiKey && apiKey.trim()),
+    configured: Boolean(apiKey),
   }
 }
 
 /** Public, key-free description of the backend for the UI. */
 export function publicAiStatus(env = process.env) {
-  const { configured, model, baseUrl } = readAiConfig(env)
+  const { configured, model } = readAiConfig(env)
   return {
     aiConfigured: configured,
     model: configured ? model : null,
-    provider: configured ? hostOf(baseUrl) : null,
-  }
-}
-
-function hostOf(url) {
-  try {
-    return new URL(url).host
-  } catch {
-    return null
+    provider: configured ? 'Google Gemini' : null,
   }
 }

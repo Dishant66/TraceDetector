@@ -10,12 +10,15 @@ const STATUS_TIMEOUT_MS = 6000
 const ANALYZE_TIMEOUT_MS = 70_000
 
 export const FRIENDLY_ERRORS = {
-  ai_not_configured:
-    'No AI provider is configured on the server, so AI Analysis is unavailable. On-Device Scan and Demo Analysis still work.',
-  ai_timeout: 'The AI provider took too long to respond. Try again, or run an On-Device Scan.',
-  ai_unreachable: 'The AI provider could not be reached. Check your connection and try again.',
-  ai_request_failed: 'The AI provider rejected the request. Check the server API key and model name.',
-  ai_bad_response: 'The AI provider returned something unexpected.',
+  ai_not_configured: 'AI Analysis requires a Gemini API key. Use On-Device Scan or Demo Analysis instead.',
+  ai_timeout: 'AI analysis is temporarily unavailable (the request timed out). Try On-Device Scan or Demo Analysis.',
+  ai_unreachable: 'AI analysis is temporarily unavailable (Gemini could not be reached). Try On-Device Scan or Demo Analysis.',
+  ai_invalid_key: 'AI analysis is temporarily unavailable. Try On-Device Scan or Demo Analysis.',
+  ai_rate_limited: 'AI analysis is temporarily unavailable (rate limit reached). Try again shortly, or use On-Device Scan or Demo Analysis.',
+  ai_model_unavailable: 'AI analysis is temporarily unavailable. Try On-Device Scan or Demo Analysis.',
+  ai_blocked: 'Gemini declined to analyse this image. Try a different image, or use On-Device Scan or Demo Analysis.',
+  ai_request_failed: 'AI analysis is temporarily unavailable. Try On-Device Scan or Demo Analysis.',
+  ai_bad_response: 'AI analysis is temporarily unavailable. Try On-Device Scan or Demo Analysis.',
   ai_malformed_json: 'The AI response could not be read as a privacy report. Try running the analysis again.',
   image_too_large: 'The image is too large for AI analysis. Try a smaller export.',
   unsupported_type: 'That image type cannot be sent for AI analysis.',
