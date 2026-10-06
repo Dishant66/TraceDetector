@@ -1,0 +1,307 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="800" viewBox="0 0 1280 800" font-family="Inter, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+<defs>
+<linearGradient id="deskbg" x1="0" y1="0" x2="1" y2="1">
+  <stop offset="0" stop-color="#eef2f8"/><stop offset="1" stop-color="#dde5f0"/>
+</linearGradient>
+<linearGradient id="brand" x1="0" y1="0" x2="1" y2="1">
+  <stop offset="0" stop-color="#4f7cff"/><stop offset="1" stop-color="#7c4dff"/>
+</linearGradient>
+<filter id="soft" x="-20%" y="-20%" width="140%" height="140%">
+  <feDropShadow dx="0" dy="6" stdDeviation="10" flood-color="#0b1220" flood-opacity="0.12"/>
+</filter>
+</defs>
+<rect width="1280" height="800" fill="url(#deskbg)"/>
+<rect x="24" y="20" width="1232" height="760" rx="14" fill="#ffffff" filter="url(#soft)"/>
+<path d="M24 34a14 14 0 0 1 14-14h1204a14 14 0 0 1 14 14v38H24z" fill="#f3f5f9"/>
+<circle cx="52" cy="46" r="6" fill="#ff5f57"/><circle cx="72" cy="46" r="6" fill="#febc2e"/><circle cx="92" cy="46" r="6" fill="#28c840"/>
+<rect x="120" y="30" width="260" height="32" rx="8" fill="#ffffff"/>
+<text x="138" y="51" font-size="13" fill="#44506b">Acme Robotics — People Hub</text>
+<text x="396" y="51" font-size="13" fill="#9aa5bb">+</text>
+<rect x="120" y="82" width="1080" height="34" rx="17" fill="#eef1f6"/>
+<text x="142" y="104" font-size="12.5" fill="#55607a" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">https://people.internal.acme-robotics.io/employee/ACM-2044-1183</text>
+<text x="56" y="104" font-size="13" fill="#8b95ab">‹  ›  ⟳</text>
+<rect x="56" y="140" width="636" height="600" rx="12" fill="#ffffff" stroke="#e4e9f2"/>
+<rect x="56" y="140" width="636" height="64" rx="12" fill="#fbfcfe"/>
+<rect x="56" y="192" width="636" height="12" fill="#ffffff"/>
+<rect x="56" y="203" width="636" height="1" fill="#e9edf5"/>
+<circle cx="92" cy="172" r="16" fill="url(#brand)"/>
+<text x="86" y="177" font-size="13" fill="#fff" font-weight="600">PS</text>
+<text x="120" y="170" font-size="15" font-weight="650" fill="#1b2437">Employee Record</text>
+<text x="120" y="188" font-size="11.5" fill="#8a94a9">Onboarding · Verified 12 Jan 2026</text>
+<rect x="596" y="160" width="72" height="24" rx="12" fill="#e8f5ee"/>
+<text x="612" y="176" font-size="11" fill="#1f8a52" font-weight="600">ACTIVE</text>
+<text x="88" y="240" font-size="11" fill="#95a0b5" letter-spacing="0.4">FULL NAME</text>
+<text x="88" y="262" font-size="15.5" fill="#1b2437" font-weight="500">Priya Sharma</text>
+<rect x="88" y="276" width="572" height="1" fill="#eef1f7"/>
+<text x="88" y="300" font-size="11" fill="#95a0b5" letter-spacing="0.4">WORK EMAIL</text>
+<text x="88" y="322" font-size="15.5" fill="#1b2437" font-weight="500">priya.sharma@acme-robotics.io</text>
+<rect x="88" y="336" width="572" height="1" fill="#eef1f7"/>
+<text x="88" y="360" font-size="11" fill="#95a0b5" letter-spacing="0.4">MOBILE</text>
+<text x="88" y="382" font-size="15.5" fill="#1b2437" font-weight="500">+91 98765 43210</text>
+<rect x="88" y="396" width="572" height="1" fill="#eef1f7"/>
+<text x="88" y="420" font-size="11" fill="#95a0b5" letter-spacing="0.4">EMPLOYEE ID</text>
+<text x="88" y="442" font-size="15.5" fill="#1b2437" font-weight="500">ACM-2044-1183</text>
+<rect x="88" y="456" width="572" height="1" fill="#eef1f7"/>
+<text x="88" y="480" font-size="11" fill="#95a0b5" letter-spacing="0.4">HOME ADDRESS</text>
+<text x="88" y="502" font-size="15.5" fill="#1b2437" font-weight="500">42 Brigade Road, Bengaluru 560025</text>
+<rect x="88" y="516" width="572" height="1" fill="#eef1f7"/>
+<text x="88" y="540" font-size="11" fill="#95a0b5" letter-spacing="0.4">DATE OF BIRTH</text>
+<text x="88" y="562" font-size="15.5" fill="#1b2437" font-weight="500">DOB: 14/03/1997</text>
+<rect x="88" y="576" width="572" height="1" fill="#eef1f7"/>
+<text x="88" y="600" font-size="11" fill="#95a0b5" letter-spacing="0.4">BANK ACCOUNT</text>
+<text x="88" y="622" font-size="15.5" fill="#1b2437" font-weight="500">IBAN GB29 NWBK 6016 1331 9268 19</text>
+<rect x="88" y="636" width="572" height="1" fill="#eef1f7"/>
+<text x="88" y="690" font-size="11.5" fill="#95a0b5">Last updated by p.sharma@acme-robotics.io · internal use only</text>
+<rect x="716" y="140" width="484" height="226" rx="10" fill="#111726"/>
+<rect x="716" y="140" width="484" height="30" rx="10" fill="#1b2337"/>
+<rect x="716" y="160" width="484" height="10" fill="#1b2337"/>
+<circle cx="734" cy="155" r="4" fill="#ff5f57"/><circle cx="748" cy="155" r="4" fill="#febc2e"/><circle cx="762" cy="155" r="4" fill="#28c840"/>
+<text x="786" y="159" font-size="10.5" fill="#7c89a6" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">~/acme/deploy — cat .env.production</text>
+<text x="736" y="198" font-size="12.5" fill="#6ee7a8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">$ cat .env.production</text>
+<text x="736" y="223" font-size="12.5" fill="#ffd479" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">STRIPE_SECRET_KEY=sk_live_51Hq8dZmEXAMPLE</text>
+<text x="736" y="248" font-size="12.5" fill="#ffd479" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE</text>
+<text x="736" y="273" font-size="12.5" fill="#ff9e9e" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">DB_PASSWORD=Acme@Prod2026!</text>
+<text x="736" y="298" font-size="12.5" fill="#c7d2e8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">SMTP_HOST=10.42.8.17</text>
+<text x="736" y="323" font-size="12.5" fill="#6ee7a8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">$ ssh deploy@10.42.8.17</text>
+<rect x="716" y="386" width="232" height="232" rx="10" fill="#ffffff" stroke="#e4e9f2"/>
+<text x="736" y="412" font-size="11.5" fill="#8a94a9">VISITOR PASS</text>
+<rect x="738" y="418" width="187" height="187" fill="#ffffff"/>
+<rect x="800" y="424" width="7" height="7" fill="#0f1626"/>
+<rect x="821" y="424" width="7" height="7" fill="#0f1626"/>
+<rect x="835" y="424" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="424" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="424" width="7" height="7" fill="#0f1626"/>
+<rect x="800" y="431" width="7" height="7" fill="#0f1626"/>
+<rect x="821" y="431" width="7" height="7" fill="#0f1626"/>
+<rect x="828" y="431" width="7" height="7" fill="#0f1626"/>
+<rect x="835" y="431" width="7" height="7" fill="#0f1626"/>
+<rect x="821" y="438" width="7" height="7" fill="#0f1626"/>
+<rect x="835" y="438" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="438" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="438" width="7" height="7" fill="#0f1626"/>
+<rect x="800" y="445" width="7" height="7" fill="#0f1626"/>
+<rect x="807" y="445" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="445" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="445" width="7" height="7" fill="#0f1626"/>
+<rect x="856" y="445" width="7" height="7" fill="#0f1626"/>
+<rect x="800" y="452" width="7" height="7" fill="#0f1626"/>
+<rect x="828" y="452" width="7" height="7" fill="#0f1626"/>
+<rect x="835" y="452" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="452" width="7" height="7" fill="#0f1626"/>
+<rect x="856" y="452" width="7" height="7" fill="#0f1626"/>
+<rect x="800" y="459" width="7" height="7" fill="#0f1626"/>
+<rect x="807" y="459" width="7" height="7" fill="#0f1626"/>
+<rect x="821" y="459" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="459" width="7" height="7" fill="#0f1626"/>
+<rect x="800" y="466" width="7" height="7" fill="#0f1626"/>
+<rect x="807" y="466" width="7" height="7" fill="#0f1626"/>
+<rect x="821" y="466" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="466" width="7" height="7" fill="#0f1626"/>
+<rect x="800" y="473" width="7" height="7" fill="#0f1626"/>
+<rect x="828" y="473" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="473" width="7" height="7" fill="#0f1626"/>
+<rect x="751" y="480" width="7" height="7" fill="#0f1626"/>
+<rect x="765" y="480" width="7" height="7" fill="#0f1626"/>
+<rect x="772" y="480" width="7" height="7" fill="#0f1626"/>
+<rect x="779" y="480" width="7" height="7" fill="#0f1626"/>
+<rect x="793" y="480" width="7" height="7" fill="#0f1626"/>
+<rect x="828" y="480" width="7" height="7" fill="#0f1626"/>
+<rect x="856" y="480" width="7" height="7" fill="#0f1626"/>
+<rect x="870" y="480" width="7" height="7" fill="#0f1626"/>
+<rect x="877" y="480" width="7" height="7" fill="#0f1626"/>
+<rect x="898" y="480" width="7" height="7" fill="#0f1626"/>
+<rect x="905" y="480" width="7" height="7" fill="#0f1626"/>
+<rect x="758" y="487" width="7" height="7" fill="#0f1626"/>
+<rect x="765" y="487" width="7" height="7" fill="#0f1626"/>
+<rect x="772" y="487" width="7" height="7" fill="#0f1626"/>
+<rect x="793" y="487" width="7" height="7" fill="#0f1626"/>
+<rect x="814" y="487" width="7" height="7" fill="#0f1626"/>
+<rect x="821" y="487" width="7" height="7" fill="#0f1626"/>
+<rect x="828" y="487" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="487" width="7" height="7" fill="#0f1626"/>
+<rect x="870" y="487" width="7" height="7" fill="#0f1626"/>
+<rect x="884" y="487" width="7" height="7" fill="#0f1626"/>
+<rect x="891" y="487" width="7" height="7" fill="#0f1626"/>
+<rect x="898" y="487" width="7" height="7" fill="#0f1626"/>
+<rect x="912" y="487" width="7" height="7" fill="#0f1626"/>
+<rect x="744" y="494" width="7" height="7" fill="#0f1626"/>
+<rect x="758" y="494" width="7" height="7" fill="#0f1626"/>
+<rect x="779" y="494" width="7" height="7" fill="#0f1626"/>
+<rect x="800" y="494" width="7" height="7" fill="#0f1626"/>
+<rect x="835" y="494" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="494" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="494" width="7" height="7" fill="#0f1626"/>
+<rect x="870" y="494" width="7" height="7" fill="#0f1626"/>
+<rect x="891" y="494" width="7" height="7" fill="#0f1626"/>
+<rect x="905" y="494" width="7" height="7" fill="#0f1626"/>
+<rect x="912" y="494" width="7" height="7" fill="#0f1626"/>
+<rect x="744" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="772" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="779" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="786" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="793" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="800" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="821" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="828" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="835" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="856" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="870" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="898" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="905" y="501" width="7" height="7" fill="#0f1626"/>
+<rect x="758" y="508" width="7" height="7" fill="#0f1626"/>
+<rect x="765" y="508" width="7" height="7" fill="#0f1626"/>
+<rect x="772" y="508" width="7" height="7" fill="#0f1626"/>
+<rect x="779" y="508" width="7" height="7" fill="#0f1626"/>
+<rect x="800" y="508" width="7" height="7" fill="#0f1626"/>
+<rect x="814" y="508" width="7" height="7" fill="#0f1626"/>
+<rect x="821" y="508" width="7" height="7" fill="#0f1626"/>
+<rect x="828" y="508" width="7" height="7" fill="#0f1626"/>
+<rect x="835" y="508" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="508" width="7" height="7" fill="#0f1626"/>
+<rect x="863" y="508" width="7" height="7" fill="#0f1626"/>
+<rect x="877" y="508" width="7" height="7" fill="#0f1626"/>
+<rect x="891" y="508" width="7" height="7" fill="#0f1626"/>
+<rect x="744" y="515" width="7" height="7" fill="#0f1626"/>
+<rect x="751" y="515" width="7" height="7" fill="#0f1626"/>
+<rect x="828" y="515" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="515" width="7" height="7" fill="#0f1626"/>
+<rect x="863" y="515" width="7" height="7" fill="#0f1626"/>
+<rect x="877" y="515" width="7" height="7" fill="#0f1626"/>
+<rect x="891" y="515" width="7" height="7" fill="#0f1626"/>
+<rect x="898" y="515" width="7" height="7" fill="#0f1626"/>
+<rect x="905" y="515" width="7" height="7" fill="#0f1626"/>
+<rect x="912" y="515" width="7" height="7" fill="#0f1626"/>
+<rect x="758" y="522" width="7" height="7" fill="#0f1626"/>
+<rect x="765" y="522" width="7" height="7" fill="#0f1626"/>
+<rect x="779" y="522" width="7" height="7" fill="#0f1626"/>
+<rect x="814" y="522" width="7" height="7" fill="#0f1626"/>
+<rect x="821" y="522" width="7" height="7" fill="#0f1626"/>
+<rect x="856" y="522" width="7" height="7" fill="#0f1626"/>
+<rect x="870" y="522" width="7" height="7" fill="#0f1626"/>
+<rect x="877" y="522" width="7" height="7" fill="#0f1626"/>
+<rect x="884" y="522" width="7" height="7" fill="#0f1626"/>
+<rect x="905" y="522" width="7" height="7" fill="#0f1626"/>
+<rect x="758" y="529" width="7" height="7" fill="#0f1626"/>
+<rect x="765" y="529" width="7" height="7" fill="#0f1626"/>
+<rect x="779" y="529" width="7" height="7" fill="#0f1626"/>
+<rect x="786" y="529" width="7" height="7" fill="#0f1626"/>
+<rect x="807" y="529" width="7" height="7" fill="#0f1626"/>
+<rect x="828" y="529" width="7" height="7" fill="#0f1626"/>
+<rect x="835" y="529" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="529" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="529" width="7" height="7" fill="#0f1626"/>
+<rect x="863" y="529" width="7" height="7" fill="#0f1626"/>
+<rect x="870" y="529" width="7" height="7" fill="#0f1626"/>
+<rect x="891" y="529" width="7" height="7" fill="#0f1626"/>
+<rect x="898" y="529" width="7" height="7" fill="#0f1626"/>
+<rect x="912" y="529" width="7" height="7" fill="#0f1626"/>
+<rect x="751" y="536" width="7" height="7" fill="#0f1626"/>
+<rect x="772" y="536" width="7" height="7" fill="#0f1626"/>
+<rect x="800" y="536" width="7" height="7" fill="#0f1626"/>
+<rect x="807" y="536" width="7" height="7" fill="#0f1626"/>
+<rect x="814" y="536" width="7" height="7" fill="#0f1626"/>
+<rect x="821" y="536" width="7" height="7" fill="#0f1626"/>
+<rect x="828" y="536" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="536" width="7" height="7" fill="#0f1626"/>
+<rect x="863" y="536" width="7" height="7" fill="#0f1626"/>
+<rect x="884" y="536" width="7" height="7" fill="#0f1626"/>
+<rect x="891" y="536" width="7" height="7" fill="#0f1626"/>
+<rect x="898" y="536" width="7" height="7" fill="#0f1626"/>
+<rect x="905" y="536" width="7" height="7" fill="#0f1626"/>
+<rect x="912" y="536" width="7" height="7" fill="#0f1626"/>
+<rect x="800" y="543" width="7" height="7" fill="#0f1626"/>
+<rect x="835" y="543" width="7" height="7" fill="#0f1626"/>
+<rect x="863" y="543" width="7" height="7" fill="#0f1626"/>
+<rect x="870" y="543" width="7" height="7" fill="#0f1626"/>
+<rect x="877" y="543" width="7" height="7" fill="#0f1626"/>
+<rect x="884" y="543" width="7" height="7" fill="#0f1626"/>
+<rect x="898" y="543" width="7" height="7" fill="#0f1626"/>
+<rect x="905" y="543" width="7" height="7" fill="#0f1626"/>
+<rect x="912" y="543" width="7" height="7" fill="#0f1626"/>
+<rect x="800" y="550" width="7" height="7" fill="#0f1626"/>
+<rect x="828" y="550" width="7" height="7" fill="#0f1626"/>
+<rect x="835" y="550" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="550" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="550" width="7" height="7" fill="#0f1626"/>
+<rect x="856" y="550" width="7" height="7" fill="#0f1626"/>
+<rect x="863" y="550" width="7" height="7" fill="#0f1626"/>
+<rect x="870" y="550" width="7" height="7" fill="#0f1626"/>
+<rect x="884" y="550" width="7" height="7" fill="#0f1626"/>
+<rect x="891" y="550" width="7" height="7" fill="#0f1626"/>
+<rect x="898" y="550" width="7" height="7" fill="#0f1626"/>
+<rect x="912" y="550" width="7" height="7" fill="#0f1626"/>
+<rect x="800" y="557" width="7" height="7" fill="#0f1626"/>
+<rect x="807" y="557" width="7" height="7" fill="#0f1626"/>
+<rect x="814" y="557" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="557" width="7" height="7" fill="#0f1626"/>
+<rect x="856" y="557" width="7" height="7" fill="#0f1626"/>
+<rect x="870" y="557" width="7" height="7" fill="#0f1626"/>
+<rect x="884" y="557" width="7" height="7" fill="#0f1626"/>
+<rect x="905" y="557" width="7" height="7" fill="#0f1626"/>
+<rect x="807" y="564" width="7" height="7" fill="#0f1626"/>
+<rect x="814" y="564" width="7" height="7" fill="#0f1626"/>
+<rect x="835" y="564" width="7" height="7" fill="#0f1626"/>
+<rect x="863" y="564" width="7" height="7" fill="#0f1626"/>
+<rect x="870" y="564" width="7" height="7" fill="#0f1626"/>
+<rect x="877" y="564" width="7" height="7" fill="#0f1626"/>
+<rect x="898" y="564" width="7" height="7" fill="#0f1626"/>
+<rect x="912" y="564" width="7" height="7" fill="#0f1626"/>
+<rect x="814" y="571" width="7" height="7" fill="#0f1626"/>
+<rect x="835" y="571" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="571" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="571" width="7" height="7" fill="#0f1626"/>
+<rect x="863" y="571" width="7" height="7" fill="#0f1626"/>
+<rect x="870" y="571" width="7" height="7" fill="#0f1626"/>
+<rect x="884" y="571" width="7" height="7" fill="#0f1626"/>
+<rect x="898" y="571" width="7" height="7" fill="#0f1626"/>
+<rect x="905" y="571" width="7" height="7" fill="#0f1626"/>
+<rect x="807" y="578" width="7" height="7" fill="#0f1626"/>
+<rect x="814" y="578" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="578" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="578" width="7" height="7" fill="#0f1626"/>
+<rect x="863" y="578" width="7" height="7" fill="#0f1626"/>
+<rect x="877" y="578" width="7" height="7" fill="#0f1626"/>
+<rect x="898" y="578" width="7" height="7" fill="#0f1626"/>
+<rect x="814" y="585" width="7" height="7" fill="#0f1626"/>
+<rect x="821" y="585" width="7" height="7" fill="#0f1626"/>
+<rect x="835" y="585" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="585" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="585" width="7" height="7" fill="#0f1626"/>
+<rect x="856" y="585" width="7" height="7" fill="#0f1626"/>
+<rect x="863" y="585" width="7" height="7" fill="#0f1626"/>
+<rect x="870" y="585" width="7" height="7" fill="#0f1626"/>
+<rect x="884" y="585" width="7" height="7" fill="#0f1626"/>
+<rect x="898" y="585" width="7" height="7" fill="#0f1626"/>
+<rect x="905" y="585" width="7" height="7" fill="#0f1626"/>
+<rect x="912" y="585" width="7" height="7" fill="#0f1626"/>
+<rect x="800" y="592" width="7" height="7" fill="#0f1626"/>
+<rect x="807" y="592" width="7" height="7" fill="#0f1626"/>
+<rect x="814" y="592" width="7" height="7" fill="#0f1626"/>
+<rect x="842" y="592" width="7" height="7" fill="#0f1626"/>
+<rect x="849" y="592" width="7" height="7" fill="#0f1626"/>
+<rect x="870" y="592" width="7" height="7" fill="#0f1626"/>
+<rect x="884" y="592" width="7" height="7" fill="#0f1626"/>
+<rect x="744" y="424" width="49" height="49" fill="#0f1626"/>
+<rect x="751" y="431" width="35" height="35" fill="#ffffff"/>
+<rect x="758" y="438" width="21" height="21" fill="#0f1626"/>
+<rect x="870" y="424" width="49" height="49" fill="#0f1626"/>
+<rect x="877" y="431" width="35" height="35" fill="#ffffff"/>
+<rect x="884" y="438" width="21" height="21" fill="#0f1626"/>
+<rect x="744" y="550" width="49" height="49" fill="#0f1626"/>
+<rect x="751" y="557" width="35" height="35" fill="#ffffff"/>
+<rect x="758" y="564" width="21" height="21" fill="#0f1626"/>
+<text x="736" y="608" font-size="10.5" fill="#95a0b5">acme-robotics.io/pass/ACM-2044-1183</text>
+<g transform="rotate(-3 1080 500)">
+<rect x="968" y="396" width="232" height="176" rx="4" fill="#fff3b0" filter="url(#soft)"/>
+<text x="992" y="436" font-size="14" fill="#6b5a10" font-weight="600">Guest Wi-Fi</text>
+<text x="992" y="466" font-size="13.5" fill="#5c4e0e">SSID: AcmeGuest-5G</text>
+<text x="992" y="492" font-size="13.5" fill="#5c4e0e">password: Welcome@2026</text>
+<text x="992" y="524" font-size="12" fill="#7a6a1a">desk 4B · badge 2044</text>
+</g>
+<rect x="716" y="638" width="484" height="102" rx="10" fill="#fff5f5" stroke="#ffd9d9"/>
+<text x="740" y="672" font-size="12" fill="#b4232a" font-weight="700" letter-spacing="1">STRICTLY CONFIDENTIAL — INTERNAL USE ONLY</text>
+<text x="740" y="696" font-size="11.5" fill="#8d5558">Do not distribute outside Acme Robotics. Contains personal data</text>
+<text x="740" y="714" font-size="11.5" fill="#8d5558">subject to the employee privacy policy (rev. 2026-01).</text>
+</svg>

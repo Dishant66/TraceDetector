@@ -1,0 +1,83 @@
+:root {
+  /* ---- surfaces ---- */
+  --bg: #06090f;
+  --bg-elevated: #0a0f1b;
+  --surface: rgba(255, 255, 255, 0.038);
+  --surface-strong: rgba(255, 255, 255, 0.062);
+  --surface-solid: #0f1524;
+  --border: rgba(255, 255, 255, 0.085);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  /* ---- text ---- */
+  --text: #eef2fa;
+  --text-soft: #c3ccdf;
+  --text-muted: #949fb8;
+  --text-faint: #6f7a91;
+
+  /* ---- brand ---- */
+  --brand: #6b8cff;
+  --brand-bright: #87a2ff;
+  --brand-deep: #3f5fe0;
+  --accent: #a976ff;
+  --gradient-brand: linear-gradient(135deg, #6b8cff 0%, #a976ff 100%);
+  --gradient-soft: linear-gradient(135deg, rgba(107, 140, 255, 0.16), rgba(169, 118, 255, 0.1));
+
+  /* ---- severity ---- */
+  --critical: #ff5f6b;
+  --critical-soft: rgba(255, 95, 107, 0.14);
+  --high: #ff9d4d;
+  --high-soft: rgba(255, 157, 77, 0.14);
+  --medium: #f5cf4a;
+  --medium-soft: rgba(245, 207, 74, 0.14);
+  --low: #5fa8ff;
+  --low-soft: rgba(95, 168, 255, 0.14);
+  --safe: #3fd99a;
+  --safe-soft: rgba(63, 217, 154, 0.14);
+
+  /* ---- shape ---- */
+  --radius-sm: 10px;
+  --radius: 16px;
+  --radius-lg: 22px;
+  --radius-xl: 30px;
+
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.3);
+  --shadow: 0 18px 45px -18px rgba(0, 0, 0, 0.75);
+  --shadow-lg: 0 46px 90px -34px rgba(5, 8, 18, 0.95);
+  --glow: 0 0 0 1px rgba(107, 140, 255, 0.3), 0 20px 60px -24px rgba(107, 140, 255, 0.5);
+
+  /* ---- layout ---- */
+  --page: 1200px;
+  --gutter: clamp(18px, 4vw, 44px);
+  --nav-h: 68px;
+
+  /* ---- motion ---- */
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
+  --fast: 140ms var(--ease);
+  --base: 240ms var(--ease);
+  --slow: 420ms var(--ease);
+
+  --font: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial,
+    sans-serif;
+  --mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+}
+
+.sev-critical {
+  --sev: var(--critical);
+  --sev-soft: var(--critical-soft);
+}
+.sev-high {
+  --sev: var(--high);
+  --sev-soft: var(--high-soft);
+}
+.sev-medium {
+  --sev: var(--medium);
+  --sev-soft: var(--medium-soft);
+}
+.sev-low {
+  --sev: var(--low);
+  --sev-soft: var(--low-soft);
+}
+.sev-safe {
+  --sev: var(--safe);
+  --sev-soft: var(--safe-soft);
+}
