@@ -7,15 +7,22 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 export default defineConfig([
   globalIgnores(['dist']),
   {
-    files: ['**/*.{js,jsx}'],
-    extends: [
-      js.configs.recommended,
-      reactHooks.configs.flat.recommended,
-      reactRefresh.configs.vite,
-    ],
+    // Browser application code
+    files: ['src/**/*.{js,jsx}'],
+    extends: [js.configs.recommended, reactHooks.configs.flat.recommended, reactRefresh.configs.vite],
     languageOptions: {
       globals: globals.browser,
       parserOptions: { ecmaFeatures: { jsx: true } },
+    },
+  },
+  {
+    // Server-side code: serverless handlers, the Vite dev API plugin, config
+    files: ['api/**/*.js', 'server/**/*.js', 'tests/**/*.js', 'vite.config.js', 'eslint.config.js'],
+    extends: [js.configs.recommended],
+    languageOptions: {
+      globals: { ...globals.node },
+      sourceType: 'module',
+      ecmaVersion: 'latest',
     },
   },
 ])
