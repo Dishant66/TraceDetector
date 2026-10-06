@@ -221,7 +221,7 @@ test('AI is reported as unconfigured when no key is present', () => {
 })
 
 test('the public status never leaks the API key', () => {
-  const env = { GEMINI_API_KEY: 'super-secret', GEMINI_MODEL: 'some-model' }
+  const env = { TRACEDETECTOR_AI_API_KEY: 'super-secret', TRACEDETECTOR_AI_MODEL: 'some-model' }
   const status = publicAiStatus(env)
   assert.equal(status.aiConfigured, true)
   assert.equal(status.model, 'some-model')
@@ -229,9 +229,26 @@ test('the public status never leaks the API key', () => {
   assert.equal(readAiConfig(env).apiKey, 'super-secret')
 })
 
-test('a blank GEMINI_MODEL falls back to a sane default instead of breaking', () => {
-  const config = readAiConfig({ GEMINI_API_KEY: 'k' })
+test('a blank TRACEDETECTOR_AI_MODEL falls back to a sane default instead of breaking', () => {
+  const config = readAiConfig({ TRACEDETECTOR_AI_API_KEY: 'k' })
   assert.ok(config.model && typeof config.model === 'string')
+  assert.equal(config.model, 'gemini-2.5-flash')
+})
+
+test('GEMINI_API_KEY / GEMINI_MODEL are accepted as a fallback, but TRACEDETECTOR_AI_* wins', () => {
+  const fallbackOnly = readAiConfig({ GEMINI_API_KEY: 'fallback-key', GEMINI_MODEL: 'fallback-model' })
+  assert.equal(fallbackOnly.apiKey, 'fallback-key')
+  assert.equal(fallbackOnly.model, 'fallback-model')
+  assert.equal(fallbackOnly.configured, true)
+
+  const bothSet = readAiConfig({
+    TRACEDETECTOR_AI_API_KEY: 'primary-key',
+    TRACEDETECTOR_AI_MODEL: 'primary-model',
+    GEMINI_API_KEY: 'fallback-key',
+    GEMINI_MODEL: 'fallback-model',
+  })
+  assert.equal(bothSet.apiKey, 'primary-key')
+  assert.equal(bothSet.model, 'primary-model')
 })
 
 /* ------------------------- Gemini schema contract ----------------------- */
@@ -297,7 +314,7 @@ test('a successful Gemini call is converted into TraceDetector\u2019s structured
 
   const result = await analyzeImage(
     { image: TINY_PNG, fileName: 'screenshot.png' },
-    { GEMINI_API_KEY: 'test-key', GEMINI_MODEL: 'gemini-2.5-flash', NODE_ENV: 'production' },
+    { TRACEDETECTOR_AI_API_KEY: 'test-key', TRACEDETECTOR_AI_MODEL: 'gemini-2.5-flash', NODE_ENV: 'production' },
     { createClient },
   )
 
@@ -317,7 +334,7 @@ test('an invalid Gemini API key never leaks into the response, and is friendly',
 
   const result = await analyzeImage(
     { image: TINY_PNG },
-    { GEMINI_API_KEY: 'super-secret-key', NODE_ENV: 'production' },
+    { TRACEDETECTOR_AI_API_KEY: 'super-secret-key', NODE_ENV: 'production' },
     { createClient },
   )
 
@@ -331,7 +348,7 @@ test('rate limiting is reported as 429 with a friendly message', async () => {
   const createClient = fakeClient(async () => {
     throw new ApiError({ message: 'Resource exhausted', status: 429 })
   })
-  const result = await analyzeImage({ image: TINY_PNG }, { GEMINI_API_KEY: 'k' }, { createClient })
+  const result = await analyzeImage({ image: TINY_PNG }, { TRACEDETECTOR_AI_API_KEY: 'k' }, { createClient })
   assert.equal(result.status, 429)
   assert.equal(result.body.error, 'ai_rate_limited')
 })
@@ -343,7 +360,7 @@ test('in development, provider error detail is included (with the key redacted i
 
   const result = await analyzeImage(
     { image: TINY_PNG },
-    { GEMINI_API_KEY: 'super-secret-key', NODE_ENV: 'development' },
+    { TRACEDETECTOR_AI_API_KEY: 'super-secret-key', NODE_ENV: 'development' },
     { createClient },
   )
 
@@ -355,14 +372,14 @@ test('in development, provider error detail is included (with the key redacted i
 
 test('a malformed (non-JSON) Gemini reply is reported, never crashes the handler', async () => {
   const createClient = fakeClient(async () => ({ text: 'I cannot help with that request.' }))
-  const result = await analyzeImage({ image: TINY_PNG }, { GEMINI_API_KEY: 'k', NODE_ENV: 'production' }, { createClient })
+  const result = await analyzeImage({ image: TINY_PNG }, { TRACEDETECTOR_AI_API_KEY: 'k', NODE_ENV: 'production' }, { createClient })
   assert.equal(result.status, 502)
   assert.equal(result.body.error, 'ai_malformed_json')
 })
 
 test('a prompt blocked by the provider is reported as 422, not a crash', async () => {
   const createClient = fakeClient(async () => ({ promptFeedback: { blockReason: 'SAFETY' } }))
-  const result = await analyzeImage({ image: TINY_PNG }, { GEMINI_API_KEY: 'k', NODE_ENV: 'production' }, { createClient })
+  const result = await analyzeImage({ image: TINY_PNG }, { TRACEDETECTOR_AI_API_KEY: 'k', NODE_ENV: 'production' }, { createClient })
   assert.equal(result.status, 422)
   assert.equal(result.body.error, 'ai_blocked')
 })
@@ -371,7 +388,7 @@ test('a network failure (no status code) is reported as ai_unreachable', async (
   const createClient = fakeClient(async () => {
     throw new TypeError('fetch failed')
   })
-  const result = await analyzeImage({ image: TINY_PNG }, { GEMINI_API_KEY: 'k', NODE_ENV: 'production' }, { createClient })
+  const result = await analyzeImage({ image: TINY_PNG }, { TRACEDETECTOR_AI_API_KEY: 'k', NODE_ENV: 'production' }, { createClient })
   assert.equal(result.status, 502)
   assert.equal(result.body.error, 'ai_unreachable')
 })

@@ -43,7 +43,7 @@ export async function analyzeImage(body, env = process.env, deps = {}) {
       status: 503,
       body: {
         error: 'ai_not_configured',
-        message: 'AI Analysis requires a Gemini API key. Set GEMINI_API_KEY on the server to enable it.',
+        message: 'AI Analysis requires a Gemini API key. Set TRACEDETECTOR_AI_API_KEY on the server to enable it.',
       },
     }
   }
@@ -170,7 +170,7 @@ function mapErrorBody(err, { dev = false, apiKey = '' } = {}) {
   if (status === 401 || status === 403) {
     return withDetail({
       error: 'ai_invalid_key',
-      message: 'The server\u2019s Gemini API key was rejected. Check GEMINI_API_KEY on the server.',
+      message: 'The server\u2019s Gemini API key was rejected. Check TRACEDETECTOR_AI_API_KEY on the server.',
     })
   }
   if (status === 429) {
@@ -182,7 +182,7 @@ function mapErrorBody(err, { dev = false, apiKey = '' } = {}) {
   if (status === 404) {
     return withDetail({
       error: 'ai_model_unavailable',
-      message: 'The configured Gemini model is not available for this API key. Try a different GEMINI_MODEL.',
+      message: 'The configured Gemini model is not available for this API key. Try a different TRACEDETECTOR_AI_MODEL.',
     })
   }
   if (Number.isFinite(status) && status >= 400) {
