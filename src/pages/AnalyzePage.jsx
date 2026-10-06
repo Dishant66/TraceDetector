@@ -272,7 +272,7 @@ export default function AnalyzePage({ aiStatus, demoRequest = 0, onDemoStarted }
                   <strong>Your image is analyzed for potentially exposed information.</strong>
                   <p>
                     On-Device Scan reads the file entirely inside your browser. AI Analysis sends the
-                    image to the configured vision provider for one request and keeps no copy.
+                    image to Google Gemini for one request and keeps no copy.
                     TraceDetector has no database — closing this tab erases everything.
                   </p>
                 </div>
@@ -310,8 +310,8 @@ export default function AnalyzePage({ aiStatus, demoRequest = 0, onDemoStarted }
                 {!aiStatus?.aiConfigured && engine !== 'demo' && (
                   <p className="run-hint">
                     <Icon name="info" size={13} />
-                    No AI provider is configured, so AI Analysis is unavailable. On-Device Scan gives
-                    you real metadata, barcode and file-name findings right now.
+                    AI Analysis requires a Gemini API key, which is not configured on this server. On-Device
+                    Scan gives you real metadata, barcode and file-name findings right now.
                   </p>
                 )}
 

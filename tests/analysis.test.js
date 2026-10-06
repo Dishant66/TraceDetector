@@ -219,10 +219,15 @@ test('AI is reported as unconfigured when no key is present', () => {
 })
 
 test('the public status never leaks the API key', () => {
-  const env = { TRACEDETECTOR_AI_API_KEY: 'super-secret', TRACEDETECTOR_AI_MODEL: 'some-model' }
+  const env = { GEMINI_API_KEY: 'super-secret', GEMINI_MODEL: 'some-model' }
   const status = publicAiStatus(env)
   assert.equal(status.aiConfigured, true)
   assert.equal(status.model, 'some-model')
   assert.ok(!JSON.stringify(status).includes('super-secret'))
   assert.equal(readAiConfig(env).apiKey, 'super-secret')
+})
+
+test('a blank GEMINI_MODEL falls back to a sane default instead of breaking', () => {
+  const config = readAiConfig({ GEMINI_API_KEY: 'k' })
+  assert.ok(config.model && typeof config.model === 'string')
 })

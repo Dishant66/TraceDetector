@@ -1,7 +1,8 @@
+import { GoogleGenAI } from '@google/genai'
 import { readAiConfig } from './config.js'
-import { SYSTEM_PROMPT, RESPONSE_SCHEMA_HINT } from './prompt.js'
+import { SYSTEM_PROMPT, RESPONSE_SCHEMA_HINT, GEMINI_RESPONSE_SCHEMA } from './prompt.js'
 
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024 // 8 MB of raw image data
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024 // 8 MB of raw image data, matches the client-side upload limit
 const ALLOWED_MIME = new Set([
   'image/png',
   'image/jpeg',
@@ -10,12 +11,15 @@ const ALLOWED_MIME = new Set([
   'image/gif',
   'image/bmp',
 ])
-const REQUEST_TIMEOUT_MS = 60_000
+const REQUEST_TIMEOUT_MS = 55_000
 
 /**
  * Framework-agnostic core. Takes a parsed JSON body, returns { status, body }.
  * Used by the Vercel-style serverless function AND by the Vite dev middleware,
  * so local development and deployment behave identically.
+ *
+ * The image is only ever held in memory for the duration of this single
+ * request. It is never written to disk, never logged, and never stored.
  */
 export async function analyzeImage(body, env = process.env) {
   const config = readAiConfig(env)
@@ -25,8 +29,7 @@ export async function analyzeImage(body, env = process.env) {
       status: 503,
       body: {
         error: 'ai_not_configured',
-        message:
-          'No AI provider is configured on the server. Set TRACEDETECTOR_AI_API_KEY to enable AI analysis.',
+        message: 'AI Analysis requires a Gemini API key. Set GEMINI_API_KEY on the server to enable it.',
       },
     }
   }
@@ -36,81 +39,52 @@ export async function analyzeImage(body, env = process.env) {
     return { status: 400, body: validation.error }
   }
 
-  const { dataUrl, fileName } = validation.value
+  const { mime, base64, fileName } = validation.value
 
   let response
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-
   try {
-    response = await fetch(`${config.baseUrl}/chat/completions`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.model,
+    const client = new GoogleGenAI({ apiKey: config.apiKey })
+
+    response = await client.models.generateContent({
+      model: config.model,
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text: `Analyse this image for exposed information before it is shared.${
+                fileName ? `\nOriginal file name: ${fileName}` : ''
+              }\n\n${RESPONSE_SCHEMA_HINT}`,
+            },
+            { inlineData: { mimeType: mime, data: base64 } },
+          ],
+        },
+      ],
+      config: {
+        systemInstruction: SYSTEM_PROMPT,
         temperature: 0,
-        max_tokens: 1800,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'text',
-                text: `Analyse this image for exposed information before it is shared.${
-                  fileName ? `\nOriginal file name: ${fileName}` : ''
-                }\n\n${RESPONSE_SCHEMA_HINT}`,
-              },
-              { type: 'image_url', image_url: { url: dataUrl, detail: 'high' } },
-            ],
-          },
-        ],
-      }),
+        maxOutputTokens: 2048,
+        responseMimeType: 'application/json',
+        responseSchema: GEMINI_RESPONSE_SCHEMA,
+        httpOptions: { timeout: REQUEST_TIMEOUT_MS },
+      },
     })
   } catch (err) {
-    clearTimeout(timer)
-    const aborted = err && err.name === 'AbortError'
-    return {
-      status: 504,
-      body: {
-        error: aborted ? 'ai_timeout' : 'ai_unreachable',
-        message: aborted
-          ? 'The AI provider did not respond in time.'
-          : 'Could not reach the AI provider. Check the server network connection.',
-      },
-    }
+    return { status: mapErrorStatus(err), body: mapErrorBody(err) }
   }
-  clearTimeout(timer)
 
-  if (!response.ok) {
-    const detail = await safeText(response)
+  const blockReason = response?.promptFeedback?.blockReason
+  if (blockReason) {
     return {
-      status: 502,
+      status: 422,
       body: {
-        error: 'ai_request_failed',
-        message: `The AI provider rejected the request (HTTP ${response.status}).`,
-        // Never echo the key; provider messages are truncated.
-        detail: detail.slice(0, 300),
+        error: 'ai_blocked',
+        message: 'The AI provider declined to analyse this image.',
       },
     }
   }
 
-  let payload
-  try {
-    payload = await response.json()
-  } catch {
-    return {
-      status: 502,
-      body: { error: 'ai_bad_response', message: 'The AI provider returned a non-JSON response.' },
-    }
-  }
-
-  const content = payload?.choices?.[0]?.message?.content
+  const content = extractText(response)
   const parsed = parseModelJson(content)
 
   if (!parsed) {
@@ -130,6 +104,67 @@ export async function analyzeImage(body, env = process.env) {
       model: config.model,
       report: normaliseReport(parsed),
     },
+  }
+}
+
+function extractText(response) {
+  try {
+    if (typeof response?.text === 'string') return response.text
+  } catch {
+    /* fall through to manual extraction below */
+  }
+  const parts = response?.candidates?.[0]?.content?.parts
+  if (!Array.isArray(parts)) return ''
+  return parts
+    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
+    .filter(Boolean)
+    .join('')
+}
+
+/** Never leak the API key, a stack trace, or a raw provider payload to the client. */
+function mapErrorStatus(err) {
+  if (err?.name === 'AbortError') return 504
+  const status = Number(err?.status)
+  if (status === 401 || status === 403) return 502
+  if (status === 429) return 429
+  if (status === 404) return 502
+  if (Number.isFinite(status) && status >= 400 && status < 600) return 502
+  return 502
+}
+
+function mapErrorBody(err) {
+  if (err?.name === 'AbortError') {
+    return { error: 'ai_timeout', message: 'The AI provider did not respond in time.' }
+  }
+  const status = Number(err?.status)
+  if (status === 401 || status === 403) {
+    return {
+      error: 'ai_invalid_key',
+      message: 'The server\u2019s Gemini API key was rejected. Check GEMINI_API_KEY on the server.',
+    }
+  }
+  if (status === 429) {
+    return {
+      error: 'ai_rate_limited',
+      message: 'The Gemini API rate limit was reached. Try again shortly.',
+    }
+  }
+  if (status === 404) {
+    return {
+      error: 'ai_model_unavailable',
+      message: 'The configured Gemini model is not available for this API key. Try a different GEMINI_MODEL.',
+    }
+  }
+  if (Number.isFinite(status) && status >= 400) {
+    return {
+      error: 'ai_request_failed',
+      message: `The AI provider rejected the request (HTTP ${status}).`,
+    }
+  }
+  // Network failure, DNS error, connection refused, etc.
+  return {
+    error: 'ai_unreachable',
+    message: 'Could not reach the AI provider. Check the server network connection.',
   }
 }
 
@@ -163,7 +198,8 @@ function validateBody(body) {
     }
   }
 
-  const approxBytes = Math.floor((match[2].replace(/\s/g, '').length * 3) / 4)
+  const base64 = match[2].replace(/\s/g, '')
+  const approxBytes = Math.floor((base64.length * 3) / 4)
   if (approxBytes > MAX_IMAGE_BYTES) {
     return {
       error: {
@@ -176,7 +212,8 @@ function validateBody(body) {
   const rawName = typeof body.fileName === 'string' ? body.fileName : ''
   return {
     value: {
-      dataUrl,
+      mime,
+      base64,
       fileName: rawName.slice(0, 180).replace(/[\r\n]/g, ' '),
     },
   }
@@ -222,6 +259,7 @@ const CATEGORIES = new Set([
 
 /** Defensive normalisation: never trust model output shape. */
 export function normaliseReport(raw) {
+  if (!raw || typeof raw !== 'object') raw = {}
   const findingsRaw = Array.isArray(raw.findings) ? raw.findings : []
 
   const findings = findingsRaw
@@ -284,12 +322,4 @@ function clamp01(n) {
 function str(value, max) {
   if (typeof value !== 'string') return ''
   return value.trim().slice(0, max)
-}
-
-async function safeText(response) {
-  try {
-    return await response.text()
-  } catch {
-    return ''
-  }
 }

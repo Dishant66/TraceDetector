@@ -10,8 +10,8 @@ export default function EngineSelector({ value, onChange, aiStatus, disabled }) 
       icon: ICONS.ai,
       available: Boolean(aiStatus?.aiConfigured),
       note: aiStatus?.aiConfigured
-        ? `Connected${aiStatus.model ? ` · ${aiStatus.model}` : ''}`
-        : 'No API key configured on the server',
+        ? `Connected to Gemini${aiStatus.model ? ` · ${aiStatus.model}` : ''}`
+        : 'AI Analysis requires a Gemini API key',
     },
     { ...ENGINES.local, icon: ICONS.local, available: true, note: 'Always available · runs in your browser' },
     { ...ENGINES.demo, icon: ICONS.demo, available: true, note: 'Sample data · uses a bundled mock image' },
