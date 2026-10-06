@@ -1,3 +1,5 @@
+import { Type } from '@google/genai'
+
 /**
  * The system prompt + JSON contract used for Gemini vision analysis.
  * Kept server-side so the contract can evolve without shipping it to clients.
@@ -71,49 +73,56 @@ export const RESPONSE_SCHEMA_HINT = `Respond with ONLY valid JSON (no markdown f
   ]
 }`
 
+/**
+ * A constrained string field for Gemini's schema format.
+ * IMPORTANT: Gemini's Schema type requires `type` to be the UPPERCASE
+ * OpenAPI-style enum (STRING / NUMBER / OBJECT / ARRAY / ...) and, for a
+ * fixed set of allowed string values, `format: "enum"` alongside `enum`.
+ * Using lowercase JSON-Schema-style types (e.g. "object", "string") is
+ * silently rejected by the API as an invalid argument (HTTP 400), which is
+ * the most common cause of a generic 502 from this endpoint.
+ */
+function stringEnum(values) {
+  return { type: Type.STRING, format: 'enum', enum: values }
+}
+
 /** JSON Schema handed to Gemini's structured-output mode (responseSchema). */
 export const GEMINI_RESPONSE_SCHEMA = {
-  type: 'object',
+  type: Type.OBJECT,
   properties: {
-    summary: { type: 'string' },
-    imageKind: {
-      type: 'string',
-      enum: ['screenshot', 'photo', 'document', 'id-card', 'chat', 'code', 'dashboard', 'other'],
-    },
-    extractedText: { type: 'string' },
+    summary: { type: Type.STRING },
+    imageKind: stringEnum(['screenshot', 'photo', 'document', 'id-card', 'chat', 'code', 'dashboard', 'other']),
+    extractedText: { type: Type.STRING },
     findings: {
-      type: 'array',
+      type: Type.ARRAY,
       items: {
-        type: 'object',
+        type: Type.OBJECT,
         properties: {
-          category: {
-            type: 'string',
-            enum: [
-              'personal-information',
-              'contact',
-              'location',
-              'identifier',
-              'credential',
-              'code',
-              'workplace',
-              'metadata',
-              'other',
-            ],
-          },
-          type: { type: 'string' },
-          severity: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] },
-          confidence: { type: 'number' },
-          description: { type: 'string' },
-          evidence: { type: 'string' },
-          locationHint: { type: 'string' },
+          category: stringEnum([
+            'personal-information',
+            'contact',
+            'location',
+            'identifier',
+            'credential',
+            'code',
+            'workplace',
+            'metadata',
+            'other',
+          ]),
+          type: { type: Type.STRING },
+          severity: stringEnum(['critical', 'high', 'medium', 'low']),
+          confidence: { type: Type.NUMBER },
+          description: { type: Type.STRING },
+          evidence: { type: Type.STRING },
+          locationHint: { type: Type.STRING },
           box: {
-            type: 'object',
+            type: Type.OBJECT,
             nullable: true,
             properties: {
-              x: { type: 'number' },
-              y: { type: 'number' },
-              w: { type: 'number' },
-              h: { type: 'number' },
+              x: { type: Type.NUMBER },
+              y: { type: Type.NUMBER },
+              w: { type: Type.NUMBER },
+              h: { type: Type.NUMBER },
             },
           },
         },

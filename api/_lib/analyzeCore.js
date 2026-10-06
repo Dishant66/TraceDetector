@@ -13,6 +13,11 @@ const ALLOWED_MIME = new Set([
 ])
 const REQUEST_TIMEOUT_MS = 55_000
 
+/** True unless the host explicitly marks this as a production deployment. */
+function isDevEnv(env) {
+  return (env.NODE_ENV || '').toLowerCase() !== 'production'
+}
+
 /**
  * Framework-agnostic core. Takes a parsed JSON body, returns { status, body }.
  * Used by the Vercel-style serverless function AND by the Vite dev middleware,
@@ -20,8 +25,17 @@ const REQUEST_TIMEOUT_MS = 55_000
  *
  * The image is only ever held in memory for the duration of this single
  * request. It is never written to disk, never logged, and never stored.
+ *
+ * @param {object} body - parsed JSON request body, e.g. { image, fileName }
+ * @param {Record<string,string>} env - process.env (or a test double)
+ * @param {{ createClient?: (apiKey:string) => { models: { generateContent: Function } } }} deps
+ *   Injectable client factory, used by tests to simulate Gemini responses
+ *   (including real-shaped success and failure payloads) without making a
+ *   network call or needing a real API key.
  */
-export async function analyzeImage(body, env = process.env) {
+export async function analyzeImage(body, env = process.env, deps = {}) {
+  const createClient = deps.createClient || ((apiKey) => new GoogleGenAI({ apiKey }))
+  const dev = isDevEnv(env)
   const config = readAiConfig(env)
 
   if (!config.configured) {
@@ -43,7 +57,7 @@ export async function analyzeImage(body, env = process.env) {
 
   let response
   try {
-    const client = new GoogleGenAI({ apiKey: config.apiKey })
+    const client = createClient(config.apiKey)
 
     response = await client.models.generateContent({
       model: config.model,
@@ -70,7 +84,8 @@ export async function analyzeImage(body, env = process.env) {
       },
     })
   } catch (err) {
-    return { status: mapErrorStatus(err), body: mapErrorBody(err) }
+    if (dev) logServerError('Gemini request failed', err)
+    return { status: mapErrorStatus(err), body: mapErrorBody(err, { dev, apiKey: config.apiKey }) }
   }
 
   const blockReason = response?.promptFeedback?.blockReason
@@ -80,6 +95,7 @@ export async function analyzeImage(body, env = process.env) {
       body: {
         error: 'ai_blocked',
         message: 'The AI provider declined to analyse this image.',
+        ...(dev ? { detail: `blockReason: ${blockReason}` } : {}),
       },
     }
   }
@@ -88,11 +104,13 @@ export async function analyzeImage(body, env = process.env) {
   const parsed = parseModelJson(content)
 
   if (!parsed) {
+    if (dev) logServerError('Gemini response could not be parsed as JSON', null)
     return {
       status: 502,
       body: {
         error: 'ai_malformed_json',
         message: 'The AI response could not be parsed into a privacy report.',
+        ...(dev ? { detail: redact(String(content || '').slice(0, 500), config.apiKey) } : {}),
       },
     }
   }
@@ -132,40 +150,79 @@ function mapErrorStatus(err) {
   return 502
 }
 
-function mapErrorBody(err) {
+/**
+ * Turns an SDK/network error into a safe, user-facing body.
+ *
+ * In development (`NODE_ENV !== 'production'`) a `detail` field with the
+ * provider's own error message is included (API key always stripped out),
+ * so a future integration problem — a bad model name, a malformed schema, a
+ * provider-side validation error — surfaces immediately instead of being
+ * flattened into an opaque "HTTP 502". In production `detail` is omitted.
+ */
+function mapErrorBody(err, { dev = false, apiKey = '' } = {}) {
+  const detail = dev ? redact(extractErrorDetail(err), apiKey) : undefined
+  const withDetail = (body) => (detail ? { ...body, detail } : body)
+
   if (err?.name === 'AbortError') {
-    return { error: 'ai_timeout', message: 'The AI provider did not respond in time.' }
+    return withDetail({ error: 'ai_timeout', message: 'The AI provider did not respond in time.' })
   }
   const status = Number(err?.status)
   if (status === 401 || status === 403) {
-    return {
+    return withDetail({
       error: 'ai_invalid_key',
       message: 'The server\u2019s Gemini API key was rejected. Check GEMINI_API_KEY on the server.',
-    }
+    })
   }
   if (status === 429) {
-    return {
+    return withDetail({
       error: 'ai_rate_limited',
       message: 'The Gemini API rate limit was reached. Try again shortly.',
-    }
+    })
   }
   if (status === 404) {
-    return {
+    return withDetail({
       error: 'ai_model_unavailable',
       message: 'The configured Gemini model is not available for this API key. Try a different GEMINI_MODEL.',
-    }
+    })
   }
   if (Number.isFinite(status) && status >= 400) {
-    return {
+    return withDetail({
       error: 'ai_request_failed',
       message: `The AI provider rejected the request (HTTP ${status}).`,
-    }
+    })
   }
   // Network failure, DNS error, connection refused, etc.
-  return {
+  return withDetail({
     error: 'ai_unreachable',
     message: 'Could not reach the AI provider. Check the server network connection.',
-  }
+  })
+}
+
+/** Pulls the most useful human-readable message out of an SDK error, if any. */
+function extractErrorDetail(err) {
+  const status = Number(err?.status)
+  const parts = []
+  if (Number.isFinite(status)) parts.push(`HTTP ${status}`)
+  if (err?.message) parts.push(String(err.message).slice(0, 400))
+  const causeMessage = err?.cause?.message
+  if (causeMessage && causeMessage !== err?.message) parts.push(String(causeMessage).slice(0, 200))
+  return parts.join(' — ') || 'Unknown error'
+}
+
+/** Defence in depth: strip the configured API key out of any text before it can leave the server. */
+function redact(text, apiKey) {
+  if (!text) return text
+  if (!apiKey) return text
+  return text.split(apiKey).join('[redacted]')
+}
+
+/**
+ * Development-only server log. Never includes the API key or image bytes —
+ * only the error shape, which is what you need to diagnose an integration
+ * problem (bad model name, malformed schema, auth failure, ...).
+ */
+function logServerError(label, err) {
+  console.error(`[tracedetector:ai] ${label}`, err ? { status: err.status, name: err.name, message: err.message } : '')
 }
 
 function validateBody(body) {

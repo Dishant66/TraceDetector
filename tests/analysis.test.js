@@ -5,8 +5,10 @@ import { scanText, redact } from '../src/utils/patterns.js'
 import { computeRiskScore } from '../src/utils/scoring.js'
 import { buildChecklist } from '../src/utils/checklist.js'
 import { readImageMetadata } from '../src/utils/metadata.js'
-import { normaliseReport, parseModelJson } from '../api/_lib/analyzeCore.js'
+import { normaliseReport, parseModelJson, analyzeImage } from '../api/_lib/analyzeCore.js'
 import { readAiConfig, publicAiStatus } from '../api/_lib/config.js'
+import { GEMINI_RESPONSE_SCHEMA } from '../api/_lib/prompt.js'
+import { ApiError, Type } from '@google/genai'
 
 /* ----------------------------- detectors ------------------------------ */
 
@@ -230,4 +232,146 @@ test('the public status never leaks the API key', () => {
 test('a blank GEMINI_MODEL falls back to a sane default instead of breaking', () => {
   const config = readAiConfig({ GEMINI_API_KEY: 'k' })
   assert.ok(config.model && typeof config.model === 'string')
+})
+
+/* ------------------------- Gemini schema contract ----------------------- */
+
+test('the Gemini response schema uses the uppercase Type enum, not JSON-Schema strings', () => {
+  // Gemini's structured-output API rejects lowercase JSON-Schema-style types
+  // (e.g. "object") with an HTTP 400 — this previously surfaced to users as a
+  // generic 502. Guard against regressing to the wrong casing.
+  assert.equal(GEMINI_RESPONSE_SCHEMA.type, Type.OBJECT)
+  assert.equal(GEMINI_RESPONSE_SCHEMA.properties.summary.type, Type.STRING)
+  assert.equal(GEMINI_RESPONSE_SCHEMA.properties.findings.type, Type.ARRAY)
+
+  const findingSchema = GEMINI_RESPONSE_SCHEMA.properties.findings.items
+  assert.equal(findingSchema.type, Type.OBJECT)
+  assert.equal(findingSchema.properties.category.type, Type.STRING)
+  assert.equal(findingSchema.properties.confidence.type, Type.NUMBER)
+  assert.equal(findingSchema.properties.box.type, Type.OBJECT)
+
+  // Constrained string fields must set format:"enum" alongside enum, per the
+  // Gemini Schema contract, or the values are not actually enforced.
+  for (const field of [GEMINI_RESPONSE_SCHEMA.properties.imageKind, findingSchema.properties.category, findingSchema.properties.severity]) {
+    assert.equal(field.format, 'enum')
+    assert.ok(Array.isArray(field.enum) && field.enum.length > 0)
+  }
+})
+
+/* --------------------- analyzeImage end-to-end (mocked) ------------------ */
+
+const TINY_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII='
+
+function fakeClient(generateContent) {
+  return () => ({ models: { generateContent } })
+}
+
+test('a successful Gemini call is converted into TraceDetector\u2019s structured report', async () => {
+  const modelJson = JSON.stringify({
+    summary: 'A screenshot containing one visible email address.',
+    imageKind: 'screenshot',
+    extractedText: 'Contact: jo****@example.com',
+    findings: [
+      {
+        category: 'contact',
+        type: 'Email Address',
+        severity: 'medium',
+        confidence: 0.9,
+        description: 'An email address is visible in the screenshot.',
+        evidence: 'jo****@example.com',
+        locationHint: 'top-left corner',
+        box: { x: 0.1, y: 0.1, w: 0.3, h: 0.05 },
+      },
+    ],
+  })
+
+  const createClient = fakeClient(async (request) => {
+    // The image must be forwarded as inline multimodal data, not a URL.
+    const imagePart = request.contents[0].parts.find((p) => p.inlineData)
+    assert.ok(imagePart, 'expected an inlineData part carrying the image')
+    assert.equal(imagePart.inlineData.mimeType, 'image/png')
+    assert.equal(request.config.responseMimeType, 'application/json')
+    return { text: modelJson, promptFeedback: undefined }
+  })
+
+  const result = await analyzeImage(
+    { image: TINY_PNG, fileName: 'screenshot.png' },
+    { GEMINI_API_KEY: 'test-key', GEMINI_MODEL: 'gemini-2.5-flash', NODE_ENV: 'production' },
+    { createClient },
+  )
+
+  assert.equal(result.status, 200)
+  assert.equal(result.body.engine, 'ai')
+  assert.equal(result.body.model, 'gemini-2.5-flash')
+  assert.equal(result.body.report.findings.length, 1)
+  assert.equal(result.body.report.findings[0].category, 'contact')
+  assert.equal(result.body.report.findings[0].type, 'Email Address')
+  assert.ok(result.body.report.findings[0].box)
+})
+
+test('an invalid Gemini API key never leaks into the response, and is friendly', async () => {
+  const createClient = fakeClient(async () => {
+    throw new ApiError({ message: 'API key not valid. Please pass a valid API key.', status: 401 })
+  })
+
+  const result = await analyzeImage(
+    { image: TINY_PNG },
+    { GEMINI_API_KEY: 'super-secret-key', NODE_ENV: 'production' },
+    { createClient },
+  )
+
+  assert.equal(result.status, 502)
+  assert.equal(result.body.error, 'ai_invalid_key')
+  assert.ok(!JSON.stringify(result.body).includes('super-secret-key'))
+  assert.equal(result.body.detail, undefined, 'no detail field in production')
+})
+
+test('rate limiting is reported as 429 with a friendly message', async () => {
+  const createClient = fakeClient(async () => {
+    throw new ApiError({ message: 'Resource exhausted', status: 429 })
+  })
+  const result = await analyzeImage({ image: TINY_PNG }, { GEMINI_API_KEY: 'k' }, { createClient })
+  assert.equal(result.status, 429)
+  assert.equal(result.body.error, 'ai_rate_limited')
+})
+
+test('in development, provider error detail is included (with the key redacted if present)', async () => {
+  const createClient = fakeClient(async () => {
+    throw new ApiError({ message: 'Invalid JSON payload received. Unknown name "foo": super-secret-key leaked here', status: 400 })
+  })
+
+  const result = await analyzeImage(
+    { image: TINY_PNG },
+    { GEMINI_API_KEY: 'super-secret-key', NODE_ENV: 'development' },
+    { createClient },
+  )
+
+  assert.equal(result.status, 502)
+  assert.ok(result.body.detail, 'expected a detail field in development')
+  assert.ok(result.body.detail.includes('HTTP 400'))
+  assert.ok(!result.body.detail.includes('super-secret-key'), 'the API key must always be redacted')
+})
+
+test('a malformed (non-JSON) Gemini reply is reported, never crashes the handler', async () => {
+  const createClient = fakeClient(async () => ({ text: 'I cannot help with that request.' }))
+  const result = await analyzeImage({ image: TINY_PNG }, { GEMINI_API_KEY: 'k', NODE_ENV: 'production' }, { createClient })
+  assert.equal(result.status, 502)
+  assert.equal(result.body.error, 'ai_malformed_json')
+})
+
+test('a prompt blocked by the provider is reported as 422, not a crash', async () => {
+  const createClient = fakeClient(async () => ({ promptFeedback: { blockReason: 'SAFETY' } }))
+  const result = await analyzeImage({ image: TINY_PNG }, { GEMINI_API_KEY: 'k', NODE_ENV: 'production' }, { createClient })
+  assert.equal(result.status, 422)
+  assert.equal(result.body.error, 'ai_blocked')
+})
+
+test('a network failure (no status code) is reported as ai_unreachable', async () => {
+  const createClient = fakeClient(async () => {
+    throw new TypeError('fetch failed')
+  })
+  const result = await analyzeImage({ image: TINY_PNG }, { GEMINI_API_KEY: 'k', NODE_ENV: 'production' }, { createClient })
+  assert.equal(result.status, 502)
+  assert.equal(result.body.error, 'ai_unreachable')
 })
