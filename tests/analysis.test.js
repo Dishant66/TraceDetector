@@ -7,7 +7,7 @@ import { buildChecklist } from '../src/utils/checklist.js'
 import { readImageMetadata } from '../src/utils/metadata.js'
 import { normaliseReport, parseModelJson, analyzeImage, extractModelText } from '../api/_lib/analyzeCore.js'
 import { readAiConfig, publicAiStatus } from '../api/_lib/config.js'
-import { GEMINI_RESPONSE_SCHEMA, SYSTEM_PROMPT } from '../api/_lib/prompt.js'
+import { GEMINI_RESPONSE_SCHEMA, SYSTEM_PROMPT, MAX_FINDINGS, REPORT_TEXT_LIMITS } from '../api/_lib/prompt.js'
 import { ApiError, GenerateContentResponse, Type } from '@google/genai'
 import { createServer } from 'vite'
 import { FRIENDLY_ERRORS, requestAiAnalysis } from '../src/services/aiClient.js'
@@ -214,6 +214,27 @@ test('normalises a hostile AI payload without throwing', () => {
   assert.ok(clamped.x + clamped.w <= 1.0001, 'boxes are clamped inside the image')
 })
 
+test('normalised AI output stays within the concise finding and text limits', () => {
+  const oversized = 'x'.repeat(2_000)
+  const report = normaliseReport({
+    summary: oversized,
+    extractedText: oversized,
+    findings: Array.from({ length: 8 }, (_, index) => ({
+      type: `Finding ${index}`,
+      description: oversized,
+      evidence: oversized,
+      locationHint: oversized,
+    })),
+  })
+
+  assert.equal(report.findings.length, MAX_FINDINGS)
+  assert.equal(report.summary.length, REPORT_TEXT_LIMITS.summary)
+  assert.equal(report.extractedText.length, REPORT_TEXT_LIMITS.extractedText)
+  assert.equal(report.findings[0].description.length, REPORT_TEXT_LIMITS.findingDescription)
+  assert.equal(report.findings[0].evidence.length, REPORT_TEXT_LIMITS.findingEvidence)
+  assert.equal(report.findings[0].locationHint.length, REPORT_TEXT_LIMITS.findingLocation)
+})
+
 /* ----------------------------- server config --------------------------- */
 
 test('AI is reported as unconfigured when no key is present', () => {
@@ -222,51 +243,38 @@ test('AI is reported as unconfigured when no key is present', () => {
   assert.equal(status.model, null)
 })
 
-test('the public status never leaks the API key or optional fallback model', () => {
+test('the public status never leaks the API key', () => {
   const env = {
     TRACEDETECTOR_AI_API_KEY: 'super-secret',
     TRACEDETECTOR_AI_MODEL: 'some-model',
-    TRACEDETECTOR_AI_FALLBACK_MODEL: 'fallback-model',
   }
   const status = publicAiStatus(env)
   assert.equal(status.aiConfigured, true)
   assert.equal(status.model, 'some-model')
   assert.ok(!JSON.stringify(status).includes('super-secret'))
-  assert.ok(!JSON.stringify(status).includes('fallback-model'))
   assert.equal(readAiConfig(env).apiKey, 'super-secret')
 })
 
-test('blank model configuration uses the configured primary model default', () => {
+test('blank model configuration uses the configured single-model default', () => {
   const config = readAiConfig({ TRACEDETECTOR_AI_API_KEY: 'k' })
-  assert.ok(config.model && typeof config.model === 'string')
   assert.equal(config.model, 'gemini-3.8-flash')
-  assert.equal(config.fallbackModel, '')
+  assert.deepEqual(Object.keys(config).sort(), ['apiKey', 'configured', 'model'])
 })
 
-test('the optional fallback model is read only from its server-side environment variable', () => {
-  const config = readAiConfig({
-    TRACEDETECTOR_AI_API_KEY: 'k',
-    TRACEDETECTOR_AI_MODEL: 'gemini-3.8-flash',
-    TRACEDETECTOR_AI_FALLBACK_MODEL: 'gemini-3.5-flash-lite',
-  })
-  assert.equal(config.model, 'gemini-3.8-flash')
-  assert.equal(config.fallbackModel, 'gemini-3.5-flash-lite')
-})
+test('legacy Gemini environment names remain supported, with TraceDetector settings taking precedence', () => {
+  const legacyConfig = readAiConfig({ GEMINI_API_KEY: 'legacy-key', GEMINI_MODEL: 'legacy-model' })
+  assert.equal(legacyConfig.apiKey, 'legacy-key')
+  assert.equal(legacyConfig.model, 'legacy-model')
+  assert.equal(legacyConfig.configured, true)
 
-test('GEMINI_API_KEY / GEMINI_MODEL are accepted as a fallback, but TRACEDETECTOR_AI_* wins', () => {
-  const fallbackOnly = readAiConfig({ GEMINI_API_KEY: 'fallback-key', GEMINI_MODEL: 'fallback-model' })
-  assert.equal(fallbackOnly.apiKey, 'fallback-key')
-  assert.equal(fallbackOnly.model, 'fallback-model')
-  assert.equal(fallbackOnly.configured, true)
-
-  const bothSet = readAiConfig({
-    TRACEDETECTOR_AI_API_KEY: 'primary-key',
-    TRACEDETECTOR_AI_MODEL: 'primary-model',
-    GEMINI_API_KEY: 'fallback-key',
-    GEMINI_MODEL: 'fallback-model',
+  const configured = readAiConfig({
+    TRACEDETECTOR_AI_API_KEY: 'tracedetector-key',
+    TRACEDETECTOR_AI_MODEL: 'tracedetector-model',
+    GEMINI_API_KEY: 'legacy-key',
+    GEMINI_MODEL: 'legacy-model',
   })
-  assert.equal(bothSet.apiKey, 'primary-key')
-  assert.equal(bothSet.model, 'primary-model')
+  assert.equal(configured.apiKey, 'tracedetector-key')
+  assert.equal(configured.model, 'tracedetector-model')
 })
 
 /* ------------------------- Gemini schema contract ----------------------- */
@@ -284,6 +292,12 @@ test('the Gemini response schema uses the uppercase Type enum, not JSON-Schema s
   assert.equal(findingSchema.properties.category.type, Type.STRING)
   assert.equal(findingSchema.properties.confidence.type, Type.NUMBER)
   assert.equal(findingSchema.properties.box.type, Type.OBJECT)
+  assert.equal(GEMINI_RESPONSE_SCHEMA.properties.findings.maxItems, String(MAX_FINDINGS))
+  assert.equal(GEMINI_RESPONSE_SCHEMA.properties.summary.maxLength, String(REPORT_TEXT_LIMITS.summary))
+  assert.equal(
+    findingSchema.properties.description.maxLength,
+    String(REPORT_TEXT_LIMITS.findingDescription),
+  )
 
   // Constrained string fields must set format:"enum" alongside enum, per the
   // Gemini Schema contract, or the values are not actually enforced.
@@ -491,62 +505,26 @@ test('repeated HTTP 504 failures stop after three bounded attempts', async () =>
   assert.equal(result.body.error, 'ai_provider_unavailable')
 })
 
-test('primary retries exhaust before the configured fallback model is attempted', async () => {
+test('transient failures retry only the configured model and stop after three attempts', async () => {
   const models = []
   const createClient = fakeClient(async (request) => {
     models.push(request.model)
-    if (request.model === 'gemini-3.8-flash') throw geminiError(503, 'UNAVAILABLE')
-    return { text: NORMALIZED_SUCCESS }
+    throw geminiError(503, 'UNAVAILABLE')
   })
   const retry = noWait()
-  const result = await analyzeImage(
-    { image: TINY_PNG },
-    {
-      ...PRODUCTION_ENV,
-      TRACEDETECTOR_AI_FALLBACK_MODEL: 'gemini-3.5-flash-lite',
-    },
-    { createClient, sleep: retry.sleep },
-  )
+  const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, {
+    createClient,
+    sleep: retry.sleep,
+  })
 
-  assert.deepEqual(models, [
-    'gemini-3.8-flash',
-    'gemini-3.8-flash',
-    'gemini-3.8-flash',
-    'gemini-3.5-flash-lite',
-  ])
+  assert.deepEqual(models, Array(3).fill(PRODUCTION_ENV.TRACEDETECTOR_AI_MODEL))
   assert.deepEqual(retry.delays, [1_000, 2_000])
-  assert.equal(result.status, 200)
-  assert.equal(result.body.model, 'gemini-3.5-flash-lite')
-  assert.equal(result.body.report.summary, 'A clear image with no visible privacy findings.')
-})
-
-test('a transient fallback failure also stops after its retry limit and returns a clean error', async () => {
-  const models = []
-  const createClient = fakeClient(async (request) => {
-    models.push(request.model)
-    if (request.model === 'gemini-3.8-flash') throw geminiError(503, 'UNAVAILABLE')
-    throw geminiError(504, 'DEADLINE_EXCEEDED')
-  })
-  const retry = noWait()
-  const result = await analyzeImage(
-    { image: TINY_PNG },
-    {
-      ...PRODUCTION_ENV,
-      TRACEDETECTOR_AI_FALLBACK_MODEL: 'gemini-3.5-flash-lite',
-    },
-    { createClient, sleep: retry.sleep },
-  )
-
-  assert.equal(models.length, 6)
-  assert.deepEqual(models.slice(0, 3), Array(3).fill('gemini-3.8-flash'))
-  assert.deepEqual(models.slice(3), Array(3).fill('gemini-3.5-flash-lite'))
-  assert.deepEqual(retry.delays, [1_000, 2_000, 1_000, 2_000])
   assert.equal(result.status, 503)
   assert.equal(result.body.error, 'ai_provider_unavailable')
   assert.equal(result.body.detail, undefined)
 })
 
-test('invalid-key and authentication failures do not retry or invoke the fallback', async () => {
+test('invalid-key and authentication failures do not retry', async () => {
   for (const status of [401, 403]) {
     let calls = 0
     const createClient = fakeClient(async () => {
@@ -556,7 +534,7 @@ test('invalid-key and authentication failures do not retry or invoke the fallbac
     const retry = noWait()
     const result = await analyzeImage(
       { image: TINY_PNG },
-      { ...PRODUCTION_ENV, TRACEDETECTOR_AI_FALLBACK_MODEL: 'fallback-model' },
+      PRODUCTION_ENV,
       { createClient, sleep: retry.sleep },
     )
 
@@ -567,7 +545,7 @@ test('invalid-key and authentication failures do not retry or invoke the fallbac
   }
 })
 
-test('invalid model HTTP 404 fails immediately without retry or fallback', async () => {
+test('invalid model HTTP 404 fails immediately without retry', async () => {
   let calls = 0
   const createClient = fakeClient(async () => {
     calls += 1
@@ -576,7 +554,7 @@ test('invalid model HTTP 404 fails immediately without retry or fallback', async
   const retry = noWait()
   const result = await analyzeImage(
     { image: TINY_PNG },
-    { ...PRODUCTION_ENV, TRACEDETECTOR_AI_FALLBACK_MODEL: 'fallback-model' },
+    PRODUCTION_ENV,
     { createClient, sleep: retry.sleep },
   )
 
@@ -586,7 +564,7 @@ test('invalid model HTTP 404 fails immediately without retry or fallback', async
   assert.equal(result.body.error, 'ai_model_unavailable')
 })
 
-test('malformed-request HTTP 400 fails immediately without retry or fallback', async () => {
+test('malformed-request HTTP 400 fails immediately without retry', async () => {
   let calls = 0
   const createClient = fakeClient(async () => {
     calls += 1
@@ -595,7 +573,7 @@ test('malformed-request HTTP 400 fails immediately without retry or fallback', a
   const retry = noWait()
   const result = await analyzeImage(
     { image: TINY_PNG },
-    { ...PRODUCTION_ENV, TRACEDETECTOR_AI_FALLBACK_MODEL: 'fallback-model' },
+    PRODUCTION_ENV,
     { createClient, sleep: retry.sleep },
   )
 
@@ -745,7 +723,7 @@ const RICH_REPORT_JSON = JSON.stringify({
   ],
 })
 
-test('primary model structured JSON arrives through the real SDK response shape', async () => {
+test('configured model structured JSON arrives through the real SDK response shape', async () => {
   const createClient = fakeClient(async (request) => {
     const imagePart = request.contents[0].parts.find((p) => p.inlineData)
     assert.ok(imagePart, 'expected an inlineData part carrying the image')
@@ -770,53 +748,32 @@ test('primary model structured JSON arrives through the real SDK response shape'
   assert.deepEqual(result.body.report.findings[0].box, { x: 0.2, y: 0.4, w: 0.5, h: 0.08 })
 })
 
-test('fallback model structured JSON is extracted and normalised like the primary', async () => {
-  const createClient = fakeClient(async (request) => {
-    if (request.model === 'gemini-3.8-flash') throw geminiError(503, 'UNAVAILABLE')
-    return sdkResponse({ parts: [{ text: RICH_REPORT_JSON }] })
-  })
-  const retry = noWait()
-  const result = await analyzeImage(
-    { image: TINY_PNG },
-    { ...PRODUCTION_ENV, TRACEDETECTOR_AI_FALLBACK_MODEL: 'gemini-3.5-flash-lite' },
-    { createClient, sleep: retry.sleep },
-  )
-
-  assert.equal(result.status, 200)
-  assert.equal(result.body.model, 'gemini-3.5-flash-lite')
-  assert.equal(result.body.report.findings.length, 1)
-  assert.equal(result.body.report.findings[0].type, 'API Secret Key')
-  assert.equal(result.body.report.findings[0].category, 'credential')
-})
-
-test('primary retries exhaust before a valid structured fallback response, with identical output config', async () => {
+test('transient retries reuse the configured model and strict structured-output schema', async () => {
   const models = []
   const configs = []
   const createClient = fakeClient(async (request) => {
     models.push(request.model)
     configs.push(request.config)
-    if (request.model === 'gemini-3.8-flash') throw geminiError(503, 'UNAVAILABLE')
+    if (models.length < 3) throw geminiError(503, 'UNAVAILABLE')
     return sdkResponse({ parts: [{ text: NORMALIZED_SUCCESS }] })
   })
   const retry = noWait()
-  const result = await analyzeImage(
-    { image: TINY_PNG },
-    { ...PRODUCTION_ENV, TRACEDETECTOR_AI_FALLBACK_MODEL: 'gemini-3.5-flash-lite' },
-    { createClient, sleep: retry.sleep },
-  )
+  const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, {
+    createClient,
+    sleep: retry.sleep,
+  })
 
-  assert.deepEqual(models, ['gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite'])
+  assert.deepEqual(models, Array(3).fill(PRODUCTION_ENV.TRACEDETECTOR_AI_MODEL))
   assert.deepEqual(retry.delays, [1_000, 2_000])
   assert.equal(result.status, 200)
-  assert.equal(result.body.model, 'gemini-3.5-flash-lite')
-
-  // Both models receive the same valid structured-output configuration…
-  const [primaryConfig, , , fallbackConfig] = configs
-  assert.deepEqual(structuredOutputSubset(primaryConfig), structuredOutputSubset(fallbackConfig))
-  assert.equal(primaryConfig.responseMimeType, 'application/json')
-  assert.deepEqual(primaryConfig.responseSchema, GEMINI_RESPONSE_SCHEMA)
-  // …built fresh per attempt, so no call can observe another's mutations.
-  assert.notEqual(primaryConfig, fallbackConfig)
+  assert.equal(result.body.model, PRODUCTION_ENV.TRACEDETECTOR_AI_MODEL)
+  assert.equal(configs.length, 3)
+  for (const config of configs) {
+    assert.equal(config.responseMimeType, 'application/json')
+    assert.deepEqual(config.responseSchema, GEMINI_RESPONSE_SCHEMA)
+  }
+  assert.deepEqual(structuredOutputSubset(configs[0]), structuredOutputSubset(configs[1]))
+  assert.notEqual(configs[0], configs[1], 'each attempt receives a fresh config object')
 })
 
 test('SDK response extraction matches @google/genai text semantics', () => {
@@ -868,20 +825,14 @@ test('SDK response extraction matches @google/genai text semantics', () => {
   assert.equal(extractModelText(undefined), '')
 })
 
-test('fenced JSON is recovered only as a defensive fallback path', async () => {
-  // End to end: the fallback model wraps JSON in a fence despite structured output.
+test('a complete fenced JSON report is recovered defensively by the configured model', async () => {
   const createClient = fakeClient(async (request) => {
-    if (request.model === 'gemini-3.8-flash') throw geminiError(503, 'UNAVAILABLE')
+    assert.equal(request.model, PRODUCTION_ENV.TRACEDETECTOR_AI_MODEL)
     return sdkResponse({ parts: [{ text: `Here is the report:\n\`\`\`json\n${NORMALIZED_SUCCESS}\n\`\`\`` }] })
   })
-  const retry = noWait()
-  const result = await analyzeImage(
-    { image: TINY_PNG },
-    { ...PRODUCTION_ENV, TRACEDETECTOR_AI_FALLBACK_MODEL: 'gemini-3.5-flash-lite' },
-    { createClient, sleep: retry.sleep },
-  )
+  const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient })
   assert.equal(result.status, 200)
-  assert.equal(result.body.model, 'gemini-3.5-flash-lite')
+  assert.equal(result.body.model, PRODUCTION_ENV.TRACEDETECTOR_AI_MODEL)
   assert.equal(result.body.report.summary, 'A clear image with no visible privacy findings.')
 
   // Unit level: fence tags, casing and prose around the fence are tolerated…
@@ -906,6 +857,7 @@ test('malformed model output is reported, never a silent empty report', async ()
   const cases = [
     ['prose refusal', sdkResponse({ parts: [{ text: 'I cannot help with that request.' }] })],
     ['truncated JSON', sdkResponse({ parts: [{ text: '{"summary": "cut off' }], finishReason: 'MAX_TOKENS' })],
+    ['complete-looking JSON stopped at MAX_TOKENS', sdkResponse({ parts: [{ text: NORMALIZED_SUCCESS }], finishReason: 'MAX_TOKENS' })],
     ['empty parts', sdkResponse({ parts: [] })],
     ['no candidates', (() => { const r = new GenerateContentResponse(); Object.assign(r, {}); return r })()],
   ]
@@ -946,33 +898,23 @@ test('a candidate-level content block is reported as blocked, not malformed JSON
   }
 })
 
-test('primary 504 exhaustion then a recovering fallback keeps the bounded retry budget', async () => {
+test('HTTP 504 can recover on the last retry using the same configured model', async () => {
   const models = []
   const createClient = fakeClient(async (request) => {
     models.push(request.model)
-    if (request.model === 'gemini-3.8-flash') throw geminiError(504, 'DEADLINE_EXCEEDED')
-    if (models.filter((m) => m === 'gemini-3.5-flash-lite').length === 1) {
-      throw geminiError(503, 'UNAVAILABLE')
-    }
+    if (models.length < 3) throw geminiError(504, 'DEADLINE_EXCEEDED')
     return sdkResponse({ parts: [{ text: NORMALIZED_SUCCESS }] })
   })
   const retry = noWait()
-  const result = await analyzeImage(
-    { image: TINY_PNG },
-    { ...PRODUCTION_ENV, TRACEDETECTOR_AI_FALLBACK_MODEL: 'gemini-3.5-flash-lite' },
-    { createClient, sleep: retry.sleep },
-  )
+  const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, {
+    createClient,
+    sleep: retry.sleep,
+  })
 
-  assert.deepEqual(models, [
-    'gemini-3.8-flash',
-    'gemini-3.8-flash',
-    'gemini-3.8-flash',
-    'gemini-3.5-flash-lite',
-    'gemini-3.5-flash-lite',
-  ])
-  assert.deepEqual(retry.delays, [1_000, 2_000, 1_000])
+  assert.deepEqual(models, Array(3).fill(PRODUCTION_ENV.TRACEDETECTOR_AI_MODEL))
+  assert.deepEqual(retry.delays, [1_000, 2_000])
   assert.equal(result.status, 200)
-  assert.equal(result.body.model, 'gemini-3.5-flash-lite')
+  assert.equal(result.body.model, PRODUCTION_ENV.TRACEDETECTOR_AI_MODEL)
 })
 
 test('parse-failure diagnostics log only safe metadata, never response content', async () => {

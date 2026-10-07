@@ -6,26 +6,22 @@
  *
  * Supported environment variables (see .env.example):
  *   TRACEDETECTOR_AI_API_KEY   - required to enable real AI analysis (Google Gemini)
- *   TRACEDETECTOR_AI_MODEL     - the primary Gemini multimodal/vision-capable model id
- *   TRACEDETECTOR_AI_FALLBACK_MODEL - optional model used after transient primary failures
+ *   TRACEDETECTOR_AI_MODEL     - the single Gemini multimodal/vision-capable model id
  *
- * `GEMINI_API_KEY` / `GEMINI_MODEL` are also accepted as a fallback for
- * compatibility with deployments that already set the plain Gemini names.
- * `TRACEDETECTOR_AI_*` takes precedence when both are present.
+ * The legacy `GEMINI_API_KEY` / `GEMINI_MODEL` names are also accepted when
+ * their corresponding TRACEDETECTOR_AI_* variable is not set.
  */
 
-// Default primary model, overridable by TRACEDETECTOR_AI_MODEL.
+// Default single model, overridable by TRACEDETECTOR_AI_MODEL.
 const DEFAULT_MODEL = 'gemini-3.8-flash'
 
 export function readAiConfig(env = process.env) {
   const apiKey = (env.TRACEDETECTOR_AI_API_KEY || env.GEMINI_API_KEY || '').trim()
   const model = (env.TRACEDETECTOR_AI_MODEL || env.GEMINI_MODEL || '').trim() || DEFAULT_MODEL
-  const fallbackModel = (env.TRACEDETECTOR_AI_FALLBACK_MODEL || '').trim()
 
   return {
     apiKey,
     model,
-    fallbackModel,
     configured: Boolean(apiKey),
   }
 }
