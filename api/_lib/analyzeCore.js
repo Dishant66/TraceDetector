@@ -19,6 +19,20 @@ const RETRY_BACKOFF_MS = [1_000, 2_000]
 const RETRYABLE_HTTP_STATUS_CODES = [429, 500, 502, 503, 504]
 const RETRYABLE_HTTP_STATUS_SET = new Set(RETRYABLE_HTTP_STATUS_CODES)
 const TRANSIENT_PROVIDER_STATUSES = new Set(['UNAVAILABLE', 'RESOURCE_EXHAUSTED', 'DEADLINE_EXCEEDED'])
+// Candidate-level content-filter outcomes. When the model stops for one of
+// these reasons there are no usable text parts; surfacing ai_blocked (rather
+// than ai_malformed_json) tells the caller the image was declined, not that
+// the provider returned corrupt JSON.
+const BLOCKED_FINISH_REASONS = new Set([
+  'SAFETY',
+  'IMAGE_SAFETY',
+  'RECITATION',
+  'IMAGE_RECITATION',
+  'BLOCKLIST',
+  'PROHIBITED_CONTENT',
+  'IMAGE_PROHIBITED_CONTENT',
+  'SPII',
+])
 
 /** True unless the host explicitly marks this as a production deployment. */
 function isDevEnv(env) {
@@ -61,7 +75,115 @@ export async function analyzeImage(body, env = process.env, deps = {}) {
   }
 
   const { mime, base64, fileName } = validation.value
-  const request = {
+  // A fresh request object per attempt: primary retries and the fallback
+  // model all send an identical, valid structured-output configuration, and
+  // no attempt can observe mutations made by an earlier SDK call.
+  const buildRequest = () => buildGeminiRequest({ mime, base64, fileName })
+
+  let client
+  try {
+    client = createClient(config.apiKey)
+  } catch (err) {
+    if (dev) logServerError('Gemini client initialization failed', getProviderFailureInfo(err))
+    return providerErrorResponse(err)
+  }
+
+  const wait = deps.sleep || sleep
+  let response
+  let model = config.model
+
+  try {
+    response = await generateContentWithRetries(client, model, buildRequest, { wait, dev })
+  } catch (primaryError) {
+    const canUseFallback =
+      isTransientProviderError(primaryError) &&
+      config.fallbackModel &&
+      config.fallbackModel !== config.model
+
+    if (!canUseFallback) {
+      return providerErrorResponse(primaryError)
+    }
+
+    if (dev) {
+      logServerError('Primary model retries exhausted; trying configured fallback', getProviderFailureInfo(primaryError))
+    }
+
+    model = config.fallbackModel
+    try {
+      response = await generateContentWithRetries(client, model, buildRequest, { wait, dev })
+    } catch (fallbackError) {
+      return providerErrorResponse(fallbackError)
+    }
+  }
+
+  const blockReason = response?.promptFeedback?.blockReason
+  if (blockReason) {
+    return {
+      status: 422,
+      body: {
+        error: 'ai_blocked',
+        message: 'The AI provider declined to analyse this image.',
+      },
+    }
+  }
+
+  const finishReason = firstCandidateFinishReason(response)
+  if (finishReason && BLOCKED_FINISH_REASONS.has(finishReason)) {
+    return {
+      status: 422,
+      body: {
+        error: 'ai_blocked',
+        message: 'The AI provider declined to analyse this image.',
+      },
+    }
+  }
+
+  const content = extractModelText(response)
+  const parsed = parseModelJson(content)
+
+  // The structured-output contract requires a report object carrying a
+  // findings array. Anything else — wrong-shaped JSON, a bare array, a
+  // truncated payload — must be an error, never a silent "no findings"
+  // verdict: a false-negative privacy report is worse than no report.
+  if (!parsed || !isReportPayload(parsed)) {
+    if (dev) {
+      logServerError('Gemini response could not be parsed as JSON', {
+        httpStatus: null,
+        providerStatus: null,
+        transient: false,
+        finishReason,
+        hasText: content.length > 0,
+        textLength: content.length,
+      })
+    }
+    return {
+      status: 502,
+      body: {
+        error: 'ai_malformed_json',
+        message: 'The AI response could not be parsed into a privacy report.',
+      },
+    }
+  }
+
+  return {
+    status: 200,
+    body: {
+      engine: 'ai',
+      model,
+      report: normaliseReport(parsed),
+    },
+  }
+}
+
+/**
+ * Builds the Gemini generateContent payload: native multimodal image input
+ * plus the enforced structured-output configuration (application/json
+ * constrained by the TraceDetector response schema). Called fresh for every
+ * attempt so primary retries and the fallback model always send the same
+ * valid configuration.
+ */
+function buildGeminiRequest({ mime, base64, fileName }) {
+  return {
     contents: [
       {
         role: 'user',
@@ -93,88 +215,12 @@ export async function analyzeImage(body, env = process.env, deps = {}) {
       },
     },
   }
-
-  let client
-  try {
-    client = createClient(config.apiKey)
-  } catch (err) {
-    if (dev) logServerError('Gemini client initialization failed', getProviderFailureInfo(err))
-    return providerErrorResponse(err)
-  }
-
-  const wait = deps.sleep || sleep
-  let response
-  let model = config.model
-
-  try {
-    response = await generateContentWithRetries(client, model, request, { wait, dev })
-  } catch (primaryError) {
-    const canUseFallback =
-      isTransientProviderError(primaryError) &&
-      config.fallbackModel &&
-      config.fallbackModel !== config.model
-
-    if (!canUseFallback) {
-      return providerErrorResponse(primaryError)
-    }
-
-    if (dev) {
-      logServerError('Primary model retries exhausted; trying configured fallback', getProviderFailureInfo(primaryError))
-    }
-
-    model = config.fallbackModel
-    try {
-      response = await generateContentWithRetries(client, model, request, { wait, dev })
-    } catch (fallbackError) {
-      return providerErrorResponse(fallbackError)
-    }
-  }
-
-  const blockReason = response?.promptFeedback?.blockReason
-  if (blockReason) {
-    return {
-      status: 422,
-      body: {
-        error: 'ai_blocked',
-        message: 'The AI provider declined to analyse this image.',
-      },
-    }
-  }
-
-  const content = extractText(response)
-  const parsed = parseModelJson(content)
-
-  if (!parsed) {
-    if (dev) {
-      logServerError('Gemini response could not be parsed as JSON', {
-        httpStatus: null,
-        providerStatus: null,
-        transient: false,
-      })
-    }
-    return {
-      status: 502,
-      body: {
-        error: 'ai_malformed_json',
-        message: 'The AI response could not be parsed into a privacy report.',
-      },
-    }
-  }
-
-  return {
-    status: 200,
-    body: {
-      engine: 'ai',
-      model,
-      report: normaliseReport(parsed),
-    },
-  }
 }
 
-async function generateContentWithRetries(client, model, request, { wait, dev }) {
+async function generateContentWithRetries(client, model, buildRequest, { wait, dev }) {
   for (let attempt = 1; attempt <= MAX_REQUEST_ATTEMPTS; attempt += 1) {
     try {
-      return await client.models.generateContent({ ...request, model })
+      return await client.models.generateContent({ ...buildRequest(), model })
     } catch (err) {
       const failure = getProviderFailureInfo(err)
       if (dev) {
@@ -197,18 +243,53 @@ async function generateContentWithRetries(client, model, request, { wait, dev })
   throw new Error('Gemini request attempts exhausted unexpectedly.')
 }
 
-function extractText(response) {
+/**
+ * Obtains the generated text from a @google/genai GenerateContentResponse.
+ *
+ * The SDK exposes the output as a `text` accessor (a getter returning
+ * `string | undefined` on real responses): the concatenation of the
+ * non-thought text parts of the first candidate. Prefer it, then fall back
+ * to a manual part walk with the same semantics. Thought parts and non-text
+ * parts (function calls, inline data, …) are skipped: thinking models emit
+ * reasoning text that would otherwise pollute the JSON payload and break
+ * parsing even though the answer part itself is valid.
+ */
+export function extractModelText(response) {
+  if (!response || typeof response !== 'object') return ''
+
   try {
-    if (typeof response?.text === 'string') return response.text
+    const direct = response.text
+    if (typeof direct === 'string') return direct
+    if (typeof direct === 'function') {
+      const called = direct.call(response)
+      if (typeof called === 'string') return called
+    }
   } catch {
-    /* fall through to manual extraction below */
+    /* fall through to the manual part walk below */
   }
-  const parts = response?.candidates?.[0]?.content?.parts
-  if (!Array.isArray(parts)) return ''
-  return parts
-    .map((part) => (typeof part?.text === 'string' ? part.text : ''))
-    .filter(Boolean)
-    .join('')
+
+  const candidates = Array.isArray(response.candidates) ? response.candidates : []
+  for (const candidate of candidates) {
+    const parts = candidate?.content?.parts
+    if (!Array.isArray(parts)) continue
+    const text = parts
+      .filter((part) => part && typeof part === 'object')
+      .filter((part) => part.thought !== true)
+      .map((part) => (typeof part.text === 'string' ? part.text : ''))
+      .join('')
+    if (text) return text
+  }
+  return ''
+}
+
+function firstCandidateFinishReason(response) {
+  const reason = response?.candidates?.[0]?.finishReason
+  return typeof reason === 'string' ? reason.trim().toUpperCase() : null
+}
+
+/** Minimal TraceDetector contract: a report object carrying a findings array. */
+function isReportPayload(value) {
+  return !!value && typeof value === 'object' && !Array.isArray(value) && Array.isArray(value.findings)
 }
 
 /** Classify provider failures without exposing their raw messages to the browser or logs. */
@@ -345,14 +426,29 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-/** Server-side development log containing only whitelisted status metadata. */
-function logServerError(label, { httpStatus = null, providerStatus = null, transient = false, attempt, maxAttempts } = {}) {
+/** Server-side development log containing only whitelisted status metadata. Never logs response content. */
+function logServerError(
+  label,
+  {
+    httpStatus = null,
+    providerStatus = null,
+    transient = false,
+    attempt,
+    maxAttempts,
+    finishReason,
+    hasText,
+    textLength,
+  } = {},
+) {
   console.warn(`[tracedetector:ai] ${label}`, {
     httpStatus,
     providerStatus,
     transient,
     ...(attempt === undefined ? {} : { attempt }),
     ...(maxAttempts === undefined ? {} : { maxAttempts }),
+    ...(finishReason === undefined ? {} : { finishReason }),
+    ...(hasText === undefined ? {} : { hasText }),
+    ...(textLength === undefined ? {} : { textLength }),
   })
 }
 
@@ -407,24 +503,43 @@ function validateBody(body) {
   }
 }
 
-/** Models occasionally wrap JSON in prose or a markdown fence. Recover gracefully. */
+/**
+ * Parses the model's JSON payload out of the generated text.
+ *
+ * With structured output enforced the text is normally raw JSON. Fenced
+ * blocks (```json … ```, any tag/casing) and brace-slicing exist only as
+ * defensive last-resort paths for models that wrap the payload despite the
+ * responseMimeType/responseSchema configuration. Only plain objects are
+ * accepted — arrays and primitives are never a valid report.
+ */
 export function parseModelJson(content) {
-  if (typeof content !== 'string' || !content.trim()) return null
+  if (typeof content !== 'string') return null
+  const text = content.replace(/^\uFEFF/, '').trim()
+  if (!text) return null
 
-  const attempts = []
-  attempts.push(content.trim())
+  const candidates = [text]
 
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(content)
-  if (fenced) attempts.push(fenced[1].trim())
+  // Defensive path: try the inside of every fenced block, in order.
+  const fencePattern = /```([^`\n]*)\n?([\s\S]*?)```/g
+  let fence
+  while ((fence = fencePattern.exec(text)) !== null && candidates.length <= 10) {
+    const inner = (fence[2] || '').trim()
+    if (inner && inner !== text && !candidates.includes(inner)) candidates.push(inner)
+  }
 
-  const first = content.indexOf('{')
-  const last = content.lastIndexOf('}')
-  if (first !== -1 && last > first) attempts.push(content.slice(first, last + 1))
+  // Last resort: the outermost brace span (handles prose around JSON and
+  // unclosed fences from truncated output that still happens to be complete).
+  const first = text.indexOf('{')
+  const last = text.lastIndexOf('}')
+  if (first !== -1 && last > first) {
+    const sliced = text.slice(first, last + 1).trim()
+    if (sliced !== text && !candidates.includes(sliced)) candidates.push(sliced)
+  }
 
-  for (const candidate of attempts) {
+  for (const candidate of candidates) {
     try {
       const value = JSON.parse(candidate)
-      if (value && typeof value === 'object') return value
+      if (value && typeof value === 'object' && !Array.isArray(value)) return value
     } catch {
       /* try next strategy */
     }
