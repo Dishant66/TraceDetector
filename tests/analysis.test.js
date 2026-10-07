@@ -5,10 +5,10 @@ import { scanText, redact } from '../src/utils/patterns.js'
 import { computeRiskScore } from '../src/utils/scoring.js'
 import { buildChecklist } from '../src/utils/checklist.js'
 import { readImageMetadata } from '../src/utils/metadata.js'
-import { normaliseReport, parseModelJson, analyzeImage } from '../api/_lib/analyzeCore.js'
+import { normaliseReport, parseModelJson, analyzeImage, extractModelText } from '../api/_lib/analyzeCore.js'
 import { readAiConfig, publicAiStatus } from '../api/_lib/config.js'
-import { GEMINI_RESPONSE_SCHEMA } from '../api/_lib/prompt.js'
-import { ApiError, Type } from '@google/genai'
+import { GEMINI_RESPONSE_SCHEMA, SYSTEM_PROMPT } from '../api/_lib/prompt.js'
+import { ApiError, GenerateContentResponse, Type } from '@google/genai'
 import { createServer } from 'vite'
 import { FRIENDLY_ERRORS, requestAiAnalysis } from '../src/services/aiClient.js'
 
@@ -699,6 +699,309 @@ test('a network failure (no status code) remains a single clean ai_unreachable e
   assert.deepEqual(retry.delays, [])
   assert.equal(result.status, 502)
   assert.equal(result.body.error, 'ai_unreachable')
+})
+
+/* ------------- structured output + SDK response handling ------------- */
+
+/**
+ * Builds a real-shaped @google/genai response: a GenerateContentResponse
+ * instance whose `text` is the SDK's own getter over candidates / content /
+ * parts — the exact shape production returns, not a `{ text }` stub.
+ */
+function sdkResponse({ parts, finishReason = 'STOP', promptFeedback } = {}) {
+  const response = new GenerateContentResponse()
+  Object.assign(response, {
+    candidates: [{ content: { role: 'model', parts }, finishReason }],
+    ...(promptFeedback === undefined ? {} : { promptFeedback }),
+  })
+  return response
+}
+
+function structuredOutputSubset(config) {
+  return {
+    systemInstruction: config.systemInstruction,
+    temperature: config.temperature,
+    maxOutputTokens: config.maxOutputTokens,
+    responseMimeType: config.responseMimeType,
+    responseSchema: config.responseSchema,
+  }
+}
+
+const RICH_REPORT_JSON = JSON.stringify({
+  summary: 'A screenshot showing a visible API key in a terminal window.',
+  imageKind: 'screenshot',
+  extractedText: 'sk_live_**** connected',
+  findings: [
+    {
+      category: 'credential',
+      type: 'API Secret Key',
+      severity: 'critical',
+      confidence: 0.95,
+      description: 'A live API key is visible in the terminal output.',
+      evidence: 'sk_live_****',
+      locationHint: 'middle of the terminal window',
+      box: { x: 0.2, y: 0.4, w: 0.5, h: 0.08 },
+    },
+  ],
+})
+
+test('primary model structured JSON arrives through the real SDK response shape', async () => {
+  const createClient = fakeClient(async (request) => {
+    const imagePart = request.contents[0].parts.find((p) => p.inlineData)
+    assert.ok(imagePart, 'expected an inlineData part carrying the image')
+    assert.equal(imagePart.inlineData.mimeType, 'image/png')
+    assert.equal(request.config.responseMimeType, 'application/json')
+    assert.deepEqual(request.config.responseSchema, GEMINI_RESPONSE_SCHEMA)
+    assert.equal(request.config.systemInstruction, SYSTEM_PROMPT)
+    assert.equal(request.model, 'gemini-3.8-flash')
+    return sdkResponse({ parts: [{ text: RICH_REPORT_JSON }] })
+  })
+
+  const result = await analyzeImage({ image: TINY_PNG, fileName: 'screenshot.png' }, PRODUCTION_ENV, {
+    createClient,
+  })
+
+  assert.equal(result.status, 200)
+  assert.equal(result.body.engine, 'ai')
+  assert.equal(result.body.model, 'gemini-3.8-flash')
+  assert.equal(result.body.report.summary, 'A screenshot showing a visible API key in a terminal window.')
+  assert.equal(result.body.report.findings.length, 1)
+  assert.equal(result.body.report.findings[0].severity, 'critical')
+  assert.deepEqual(result.body.report.findings[0].box, { x: 0.2, y: 0.4, w: 0.5, h: 0.08 })
+})
+
+test('fallback model structured JSON is extracted and normalised like the primary', async () => {
+  const createClient = fakeClient(async (request) => {
+    if (request.model === 'gemini-3.8-flash') throw geminiError(503, 'UNAVAILABLE')
+    return sdkResponse({ parts: [{ text: RICH_REPORT_JSON }] })
+  })
+  const retry = noWait()
+  const result = await analyzeImage(
+    { image: TINY_PNG },
+    { ...PRODUCTION_ENV, TRACEDETECTOR_AI_FALLBACK_MODEL: 'gemini-3.5-flash-lite' },
+    { createClient, sleep: retry.sleep },
+  )
+
+  assert.equal(result.status, 200)
+  assert.equal(result.body.model, 'gemini-3.5-flash-lite')
+  assert.equal(result.body.report.findings.length, 1)
+  assert.equal(result.body.report.findings[0].type, 'API Secret Key')
+  assert.equal(result.body.report.findings[0].category, 'credential')
+})
+
+test('primary retries exhaust before a valid structured fallback response, with identical output config', async () => {
+  const models = []
+  const configs = []
+  const createClient = fakeClient(async (request) => {
+    models.push(request.model)
+    configs.push(request.config)
+    if (request.model === 'gemini-3.8-flash') throw geminiError(503, 'UNAVAILABLE')
+    return sdkResponse({ parts: [{ text: NORMALIZED_SUCCESS }] })
+  })
+  const retry = noWait()
+  const result = await analyzeImage(
+    { image: TINY_PNG },
+    { ...PRODUCTION_ENV, TRACEDETECTOR_AI_FALLBACK_MODEL: 'gemini-3.5-flash-lite' },
+    { createClient, sleep: retry.sleep },
+  )
+
+  assert.deepEqual(models, ['gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-3.5-flash-lite'])
+  assert.deepEqual(retry.delays, [1_000, 2_000])
+  assert.equal(result.status, 200)
+  assert.equal(result.body.model, 'gemini-3.5-flash-lite')
+
+  // Both models receive the same valid structured-output configuration…
+  const [primaryConfig, , , fallbackConfig] = configs
+  assert.deepEqual(structuredOutputSubset(primaryConfig), structuredOutputSubset(fallbackConfig))
+  assert.equal(primaryConfig.responseMimeType, 'application/json')
+  assert.deepEqual(primaryConfig.responseSchema, GEMINI_RESPONSE_SCHEMA)
+  // …built fresh per attempt, so no call can observe another's mutations.
+  assert.notEqual(primaryConfig, fallbackConfig)
+})
+
+test('SDK response extraction matches @google/genai text semantics', () => {
+  const json = '{"findings":[]}'
+
+  // Real SDK instance: text getter over a single answer part.
+  assert.equal(extractModelText(sdkResponse({ parts: [{ text: json }] })), json)
+
+  // JSON split across several text parts is concatenated.
+  assert.equal(extractModelText(sdkResponse({ parts: [{ text: '{"find' }, { text: 'ings":[]}' }] })), json)
+
+  // Thought signatures on the answer part do not hide the text.
+  assert.equal(extractModelText(sdkResponse({ parts: [{ thoughtSignature: 'abc123', text: json }] })), json)
+
+  // Thinking-model reasoning parts are excluded, like the SDK getter does.
+  const polluted = sdkResponse({
+    parts: [{ thought: true, text: 'Reasoning over regions {x:1} carefully' }, { text: json }],
+  })
+  assert.equal(extractModelText(polluted), json)
+
+  // Same exclusion for plain REST-shaped payloads without the getter.
+  assert.equal(
+    extractModelText({
+      candidates: [
+        { content: { parts: [{ thought: true, text: 'notes {draft} here' }, { text: json }] } },
+      ],
+    }),
+    json,
+  )
+
+  // Non-text parts never contribute text.
+  assert.equal(
+    extractModelText(sdkResponse({ parts: [{ functionCall: { name: 'f' } }, { inlineData: { data: 'eA==' } }] })),
+    '',
+  )
+
+  // Legacy/callable text forms and plain string properties still work.
+  assert.equal(extractModelText({ text: json }), json)
+  assert.equal(
+    extractModelText({ text() { return json } }),
+    json,
+  )
+
+  // Empty, blocked-shaped and missing responses yield no text.
+  assert.equal(extractModelText(sdkResponse({ parts: [] })), '')
+  assert.equal(extractModelText({ candidates: [{ finishReason: 'SAFETY' }] }), '')
+  assert.equal(extractModelText({}), '')
+  assert.equal(extractModelText(null), '')
+  assert.equal(extractModelText(undefined), '')
+})
+
+test('fenced JSON is recovered only as a defensive fallback path', async () => {
+  // End to end: the fallback model wraps JSON in a fence despite structured output.
+  const createClient = fakeClient(async (request) => {
+    if (request.model === 'gemini-3.8-flash') throw geminiError(503, 'UNAVAILABLE')
+    return sdkResponse({ parts: [{ text: `Here is the report:\n\`\`\`json\n${NORMALIZED_SUCCESS}\n\`\`\`` }] })
+  })
+  const retry = noWait()
+  const result = await analyzeImage(
+    { image: TINY_PNG },
+    { ...PRODUCTION_ENV, TRACEDETECTOR_AI_FALLBACK_MODEL: 'gemini-3.5-flash-lite' },
+    { createClient, sleep: retry.sleep },
+  )
+  assert.equal(result.status, 200)
+  assert.equal(result.body.model, 'gemini-3.5-flash-lite')
+  assert.equal(result.body.report.summary, 'A clear image with no visible privacy findings.')
+
+  // Unit level: fence tags, casing and prose around the fence are tolerated…
+  const payload = '{"findings":[]}'
+  assert.deepEqual(parseModelJson(`\`\`\`JSON\n${payload}\n\`\`\``), { findings: [] })
+  assert.deepEqual(parseModelJson(`\`\`\` json\n${payload}\n\`\`\``), { findings: [] })
+  assert.deepEqual(parseModelJson(`\`\`\`text\n${payload}\n\`\`\``), { findings: [] })
+  assert.deepEqual(parseModelJson(`Sure! {"a": broken, but:\n\`\`\`json\n${payload}\n\`\`\` hope this helps`), {
+    findings: [],
+  })
+  // …later fences are tried when an earlier one is not JSON…
+  assert.deepEqual(parseModelJson(`\`\`\`\nnot json\n\`\`\`\n\`\`\`json\n${payload}\n\`\`\``), { findings: [] })
+  // …and an unclosed fence still recovers via the brace-span rescue.
+  assert.deepEqual(parseModelJson(`\`\`\`json\n${payload}`), { findings: [] })
+
+  // …but arbitrary text is never accepted as a report.
+  assert.equal(parseModelJson('I cannot help with that request.'), null)
+  assert.equal(parseModelJson('```\nno json here\n```'), null)
+})
+
+test('malformed model output is reported, never a silent empty report', async () => {
+  const cases = [
+    ['prose refusal', sdkResponse({ parts: [{ text: 'I cannot help with that request.' }] })],
+    ['truncated JSON', sdkResponse({ parts: [{ text: '{"summary": "cut off' }], finishReason: 'MAX_TOKENS' })],
+    ['empty parts', sdkResponse({ parts: [] })],
+    ['no candidates', (() => { const r = new GenerateContentResponse(); Object.assign(r, {}); return r })()],
+  ]
+
+  for (const [name, response] of cases) {
+    const createClient = fakeClient(async () => response)
+    const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient })
+    assert.equal(result.status, 502, `${name} should fail closed`)
+    assert.equal(result.body.error, 'ai_malformed_json', `${name} should fail closed`)
+  }
+})
+
+test('valid JSON with the wrong shape is rejected, not reported as safe', async () => {
+  for (const text of ['{"foo":1}', '[1,2,3]', '"just a string"', '{"findings":"nope"}', '{"findings":null}']) {
+    const createClient = fakeClient(async () => sdkResponse({ parts: [{ text }] }))
+    const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient })
+    assert.equal(result.status, 502, `${text} must not become an empty "safe" report`)
+    assert.equal(result.body.error, 'ai_malformed_json')
+  }
+
+  // The minimal valid contract — an object carrying a findings array — still passes.
+  const createClient = fakeClient(async () => sdkResponse({ parts: [{ text: '{"findings":[]}' }] }))
+  const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient })
+  assert.equal(result.status, 200)
+  assert.deepEqual(result.body.report.findings, [])
+
+  assert.equal(parseModelJson('[1,2,3]'), null)
+})
+
+test('a candidate-level content block is reported as blocked, not malformed JSON', async () => {
+  for (const finishReason of ['SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'IMAGE_SAFETY']) {
+    const response = new GenerateContentResponse()
+    Object.assign(response, { candidates: [{ finishReason }] })
+    const createClient = fakeClient(async () => response)
+    const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient })
+    assert.equal(result.status, 422, `${finishReason} should be ai_blocked`)
+    assert.equal(result.body.error, 'ai_blocked')
+  }
+})
+
+test('primary 504 exhaustion then a recovering fallback keeps the bounded retry budget', async () => {
+  const models = []
+  const createClient = fakeClient(async (request) => {
+    models.push(request.model)
+    if (request.model === 'gemini-3.8-flash') throw geminiError(504, 'DEADLINE_EXCEEDED')
+    if (models.filter((m) => m === 'gemini-3.5-flash-lite').length === 1) {
+      throw geminiError(503, 'UNAVAILABLE')
+    }
+    return sdkResponse({ parts: [{ text: NORMALIZED_SUCCESS }] })
+  })
+  const retry = noWait()
+  const result = await analyzeImage(
+    { image: TINY_PNG },
+    { ...PRODUCTION_ENV, TRACEDETECTOR_AI_FALLBACK_MODEL: 'gemini-3.5-flash-lite' },
+    { createClient, sleep: retry.sleep },
+  )
+
+  assert.deepEqual(models, [
+    'gemini-3.8-flash',
+    'gemini-3.8-flash',
+    'gemini-3.8-flash',
+    'gemini-3.5-flash-lite',
+    'gemini-3.5-flash-lite',
+  ])
+  assert.deepEqual(retry.delays, [1_000, 2_000, 1_000])
+  assert.equal(result.status, 200)
+  assert.equal(result.body.model, 'gemini-3.5-flash-lite')
+})
+
+test('parse-failure diagnostics log only safe metadata, never response content', async () => {
+  const refusal = 'Unique refusal sentence 7f3a9c that must never be logged'
+  const createClient = fakeClient(async () => sdkResponse({ parts: [{ text: refusal }] }))
+  const capturedLogs = []
+  const originalWarn = console.warn
+  console.warn = (...args) =>
+    capturedLogs.push(args.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' '))
+
+  let result
+  try {
+    result = await analyzeImage(
+      { image: TINY_PNG },
+      { ...PRODUCTION_ENV, NODE_ENV: 'development' },
+      { createClient },
+    )
+  } finally {
+    console.warn = originalWarn
+  }
+
+  assert.equal(result.body.error, 'ai_malformed_json')
+  const logs = capturedLogs.join('\n')
+  assert.ok(logs.includes('could not be parsed as JSON'))
+  assert.ok(logs.includes('STOP'), 'finishReason metadata should aid debugging')
+  for (const sensitive of [refusal, TINY_PNG, '7f3a9c']) {
+    assert.ok(!logs.includes(sensitive), `server log leaked response content: ${sensitive.slice(0, 24)}`)
+    assert.ok(!JSON.stringify(result.body).includes(sensitive))
+  }
 })
 
 test('On-Device Scan and Demo Analysis still run without calling the AI backend', async () => {
