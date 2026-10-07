@@ -90,14 +90,17 @@ needed if you want the real AI-powered engine instead of On-Device Scan / Demo A
    ```ini
    TRACEDETECTOR_AI_API_KEY=your-key-here
    ```
-4. **Configure `TRACEDETECTOR_AI_MODEL` if necessary.** Defaults to `gemini-2.5-flash` if
-   left blank. Set it explicitly if your account needs a different Gemini vision-capable
-   model id, e.g.:
+4. **Configure the models if necessary.** The primary model defaults to
+   `gemini-3.8-flash`; set `TRACEDETECTOR_AI_MODEL` explicitly if your account needs a
+   different Gemini vision-capable model id. An optional `TRACEDETECTOR_AI_FALLBACK_MODEL`
+   is attempted only after the primary model exhausts bounded retries for temporary
+   provider failures (such as HTTP 503/504). Leave it blank to disable fallback. Permanent
+   errors such as authentication failures, invalid models and malformed requests are not
+   retried or sent to the fallback model. For example:
    ```ini
-   TRACEDETECTOR_AI_MODEL=gemini-2.5-flash
+   TRACEDETECTOR_AI_MODEL=gemini-3.8-flash
+   TRACEDETECTOR_AI_FALLBACK_MODEL=
    ```
-   If a given model ever becomes unavailable for your key, just change this one value —
-   nothing else in the app needs to change.
    (`GEMINI_API_KEY` / `GEMINI_MODEL` are also read as a fallback, but
    `TRACEDETECTOR_AI_API_KEY` / `TRACEDETECTOR_AI_MODEL` take precedence.)
 5. **Run the dev server:**

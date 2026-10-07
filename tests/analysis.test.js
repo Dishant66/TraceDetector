@@ -9,6 +9,8 @@ import { normaliseReport, parseModelJson, analyzeImage } from '../api/_lib/analy
 import { readAiConfig, publicAiStatus } from '../api/_lib/config.js'
 import { GEMINI_RESPONSE_SCHEMA } from '../api/_lib/prompt.js'
 import { ApiError, Type } from '@google/genai'
+import { createServer } from 'vite'
+import { FRIENDLY_ERRORS, requestAiAnalysis } from '../src/services/aiClient.js'
 
 /* ----------------------------- detectors ------------------------------ */
 
@@ -220,19 +222,35 @@ test('AI is reported as unconfigured when no key is present', () => {
   assert.equal(status.model, null)
 })
 
-test('the public status never leaks the API key', () => {
-  const env = { TRACEDETECTOR_AI_API_KEY: 'super-secret', TRACEDETECTOR_AI_MODEL: 'some-model' }
+test('the public status never leaks the API key or optional fallback model', () => {
+  const env = {
+    TRACEDETECTOR_AI_API_KEY: 'super-secret',
+    TRACEDETECTOR_AI_MODEL: 'some-model',
+    TRACEDETECTOR_AI_FALLBACK_MODEL: 'fallback-model',
+  }
   const status = publicAiStatus(env)
   assert.equal(status.aiConfigured, true)
   assert.equal(status.model, 'some-model')
   assert.ok(!JSON.stringify(status).includes('super-secret'))
+  assert.ok(!JSON.stringify(status).includes('fallback-model'))
   assert.equal(readAiConfig(env).apiKey, 'super-secret')
 })
 
-test('a blank TRACEDETECTOR_AI_MODEL falls back to a sane default instead of breaking', () => {
+test('blank model configuration uses the configured primary model default', () => {
   const config = readAiConfig({ TRACEDETECTOR_AI_API_KEY: 'k' })
   assert.ok(config.model && typeof config.model === 'string')
-  assert.equal(config.model, 'gemini-2.5-flash')
+  assert.equal(config.model, 'gemini-3.8-flash')
+  assert.equal(config.fallbackModel, '')
+})
+
+test('the optional fallback model is read only from its server-side environment variable', () => {
+  const config = readAiConfig({
+    TRACEDETECTOR_AI_API_KEY: 'k',
+    TRACEDETECTOR_AI_MODEL: 'gemini-3.8-flash',
+    TRACEDETECTOR_AI_FALLBACK_MODEL: 'gemini-3.5-flash-lite',
+  })
+  assert.equal(config.model, 'gemini-3.8-flash')
+  assert.equal(config.fallbackModel, 'gemini-3.5-flash-lite')
 })
 
 test('GEMINI_API_KEY / GEMINI_MODEL are accepted as a fallback, but TRACEDETECTOR_AI_* wins', () => {
@@ -309,86 +327,410 @@ test('a successful Gemini call is converted into TraceDetector\u2019s structured
     assert.ok(imagePart, 'expected an inlineData part carrying the image')
     assert.equal(imagePart.inlineData.mimeType, 'image/png')
     assert.equal(request.config.responseMimeType, 'application/json')
+    assert.equal(request.config.httpOptions.timeout, 12_000)
+    assert.equal(request.config.httpOptions.retryOptions.attempts, 1, 'SDK retries must not compound our retry budget')
+    assert.equal(request.model, 'gemini-3.8-flash')
     return { text: modelJson, promptFeedback: undefined }
   })
 
   const result = await analyzeImage(
     { image: TINY_PNG, fileName: 'screenshot.png' },
-    { TRACEDETECTOR_AI_API_KEY: 'test-key', TRACEDETECTOR_AI_MODEL: 'gemini-2.5-flash', NODE_ENV: 'production' },
+    { TRACEDETECTOR_AI_API_KEY: 'test-key', TRACEDETECTOR_AI_MODEL: 'gemini-3.8-flash', NODE_ENV: 'production' },
     { createClient },
   )
 
   assert.equal(result.status, 200)
   assert.equal(result.body.engine, 'ai')
-  assert.equal(result.body.model, 'gemini-2.5-flash')
+  assert.equal(result.body.model, 'gemini-3.8-flash')
   assert.equal(result.body.report.findings.length, 1)
   assert.equal(result.body.report.findings[0].category, 'contact')
   assert.equal(result.body.report.findings[0].type, 'Email Address')
   assert.ok(result.body.report.findings[0].box)
 })
 
-test('an invalid Gemini API key never leaks into the response, and is friendly', async () => {
-  const createClient = fakeClient(async () => {
-    throw new ApiError({ message: 'API key not valid. Please pass a valid API key.', status: 401 })
+function geminiError(httpStatus, providerStatus, message = 'Temporary provider failure') {
+  return new ApiError({
+    status: httpStatus,
+    message: JSON.stringify({
+      error: { code: httpStatus, status: providerStatus, message },
+    }),
   })
+}
 
-  const result = await analyzeImage(
-    { image: TINY_PNG },
-    { TRACEDETECTOR_AI_API_KEY: 'super-secret-key', NODE_ENV: 'production' },
-    { createClient },
-  )
+function noWait() {
+  const delays = []
+  return { delays, sleep: async (ms) => delays.push(ms) }
+}
 
-  assert.equal(result.status, 502)
-  assert.equal(result.body.error, 'ai_invalid_key')
-  assert.ok(!JSON.stringify(result.body).includes('super-secret-key'))
-  assert.equal(result.body.detail, undefined, 'no detail field in production')
+const NORMALIZED_SUCCESS = JSON.stringify({
+  summary: 'A clear image with no visible privacy findings.',
+  imageKind: 'photo',
+  extractedText: '',
+  findings: [],
 })
 
-test('rate limiting is reported as 429 with a friendly message', async () => {
+const PRODUCTION_ENV = {
+  TRACEDETECTOR_AI_API_KEY: 'test-key',
+  TRACEDETECTOR_AI_MODEL: 'gemini-3.8-flash',
+  NODE_ENV: 'production',
+}
+
+test('Gemini succeeds on its first attempt without waiting', async () => {
+  let calls = 0
   const createClient = fakeClient(async () => {
-    throw new ApiError({ message: 'Resource exhausted', status: 429 })
+    calls += 1
+    return { text: NORMALIZED_SUCCESS }
   })
-  const result = await analyzeImage({ image: TINY_PNG }, { TRACEDETECTOR_AI_API_KEY: 'k' }, { createClient })
-  assert.equal(result.status, 429)
-  assert.equal(result.body.error, 'ai_rate_limited')
+  const retry = noWait()
+  const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient, sleep: retry.sleep })
+
+  assert.equal(calls, 1)
+  assert.deepEqual(retry.delays, [])
+  assert.equal(result.status, 200)
+  assert.equal(result.body.report.summary, 'A clear image with no visible privacy findings.')
+  assert.deepEqual(result.body.report.findings, [])
 })
 
-test('in development, provider error detail is included (with the key redacted if present)', async () => {
+test('Gemini retries HTTP 503 once, then returns the normalized report', async () => {
+  let calls = 0
   const createClient = fakeClient(async () => {
-    throw new ApiError({ message: 'Invalid JSON payload received. Unknown name "foo": super-secret-key leaked here', status: 400 })
+    calls += 1
+    if (calls === 1) throw geminiError(503, 'UNAVAILABLE', 'This model is currently experiencing high demand.')
+    return { text: NORMALIZED_SUCCESS }
   })
+  const retry = noWait()
+  const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient, sleep: retry.sleep })
 
+  assert.equal(calls, 2)
+  assert.deepEqual(retry.delays, [1_000])
+  assert.equal(result.status, 200)
+  assert.equal(result.body.report.summary, 'A clear image with no visible privacy findings.')
+  assert.ok(Array.isArray(result.body.report.findings))
+})
+
+test('Gemini retries HTTP 504 DEADLINE_EXCEEDED once, then succeeds', async () => {
+  let calls = 0
+  const createClient = fakeClient(async () => {
+    calls += 1
+    if (calls === 1) throw geminiError(504, 'DEADLINE_EXCEEDED', 'Deadline expired before operation could complete.')
+    return { text: NORMALIZED_SUCCESS }
+  })
+  const retry = noWait()
+  const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient, sleep: retry.sleep })
+
+  assert.equal(calls, 2)
+  assert.deepEqual(retry.delays, [1_000])
+  assert.equal(result.status, 200)
+})
+
+test('the other configured transient HTTP statuses are retried', async () => {
+  for (const [status, providerStatus] of [[429, 'RESOURCE_EXHAUSTED'], [500, 'INTERNAL'], [502, 'BAD_GATEWAY']]) {
+    let calls = 0
+    const createClient = fakeClient(async () => {
+      calls += 1
+      if (calls === 1) throw geminiError(status, providerStatus)
+      return { text: NORMALIZED_SUCCESS }
+    })
+    const retry = noWait()
+    const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient, sleep: retry.sleep })
+
+    assert.equal(result.status, 200, `HTTP ${status} should recover on retry`)
+    assert.equal(calls, 2)
+    assert.deepEqual(retry.delays, [1_000])
+  }
+})
+
+test('Gemini symbolic UNAVAILABLE status is retried even without a numeric HTTP status', async () => {
+  let calls = 0
+  const createClient = fakeClient(async () => {
+    calls += 1
+    if (calls === 1) {
+      throw new ApiError({
+        status: 'UNAVAILABLE',
+        message: JSON.stringify({ error: { status: 'UNAVAILABLE', message: 'Please retry.' } }),
+      })
+    }
+    return { text: NORMALIZED_SUCCESS }
+  })
+  const retry = noWait()
+  const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient, sleep: retry.sleep })
+
+  assert.equal(calls, 2)
+  assert.deepEqual(retry.delays, [1_000])
+  assert.equal(result.status, 200)
+})
+
+test('repeated HTTP 503 failures stop after three bounded attempts', async () => {
+  let calls = 0
+  const createClient = fakeClient(async () => {
+    calls += 1
+    throw geminiError(503, 'UNAVAILABLE')
+  })
+  const retry = noWait()
+  const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient, sleep: retry.sleep })
+
+  assert.equal(calls, 3)
+  assert.deepEqual(retry.delays, [1_000, 2_000])
+  assert.equal(result.status, 503)
+  assert.equal(result.body.error, 'ai_provider_unavailable')
+  assert.equal(result.body.message, 'AI analysis is temporarily unavailable. Please try again in a moment.')
+})
+
+test('repeated HTTP 504 failures stop after three bounded attempts', async () => {
+  let calls = 0
+  const createClient = fakeClient(async () => {
+    calls += 1
+    throw geminiError(504, 'DEADLINE_EXCEEDED')
+  })
+  const retry = noWait()
+  const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient, sleep: retry.sleep })
+
+  assert.equal(calls, 3)
+  assert.deepEqual(retry.delays, [1_000, 2_000])
+  assert.equal(result.status, 503)
+  assert.equal(result.body.error, 'ai_provider_unavailable')
+})
+
+test('primary retries exhaust before the configured fallback model is attempted', async () => {
+  const models = []
+  const createClient = fakeClient(async (request) => {
+    models.push(request.model)
+    if (request.model === 'gemini-3.8-flash') throw geminiError(503, 'UNAVAILABLE')
+    return { text: NORMALIZED_SUCCESS }
+  })
+  const retry = noWait()
   const result = await analyzeImage(
     { image: TINY_PNG },
-    { TRACEDETECTOR_AI_API_KEY: 'super-secret-key', NODE_ENV: 'development' },
-    { createClient },
+    {
+      ...PRODUCTION_ENV,
+      TRACEDETECTOR_AI_FALLBACK_MODEL: 'gemini-3.5-flash-lite',
+    },
+    { createClient, sleep: retry.sleep },
   )
 
+  assert.deepEqual(models, [
+    'gemini-3.8-flash',
+    'gemini-3.8-flash',
+    'gemini-3.8-flash',
+    'gemini-3.5-flash-lite',
+  ])
+  assert.deepEqual(retry.delays, [1_000, 2_000])
+  assert.equal(result.status, 200)
+  assert.equal(result.body.model, 'gemini-3.5-flash-lite')
+  assert.equal(result.body.report.summary, 'A clear image with no visible privacy findings.')
+})
+
+test('a transient fallback failure also stops after its retry limit and returns a clean error', async () => {
+  const models = []
+  const createClient = fakeClient(async (request) => {
+    models.push(request.model)
+    if (request.model === 'gemini-3.8-flash') throw geminiError(503, 'UNAVAILABLE')
+    throw geminiError(504, 'DEADLINE_EXCEEDED')
+  })
+  const retry = noWait()
+  const result = await analyzeImage(
+    { image: TINY_PNG },
+    {
+      ...PRODUCTION_ENV,
+      TRACEDETECTOR_AI_FALLBACK_MODEL: 'gemini-3.5-flash-lite',
+    },
+    { createClient, sleep: retry.sleep },
+  )
+
+  assert.equal(models.length, 6)
+  assert.deepEqual(models.slice(0, 3), Array(3).fill('gemini-3.8-flash'))
+  assert.deepEqual(models.slice(3), Array(3).fill('gemini-3.5-flash-lite'))
+  assert.deepEqual(retry.delays, [1_000, 2_000, 1_000, 2_000])
+  assert.equal(result.status, 503)
+  assert.equal(result.body.error, 'ai_provider_unavailable')
+  assert.equal(result.body.detail, undefined)
+})
+
+test('invalid-key and authentication failures do not retry or invoke the fallback', async () => {
+  for (const status of [401, 403]) {
+    let calls = 0
+    const createClient = fakeClient(async () => {
+      calls += 1
+      throw new ApiError({ status, message: 'Authentication failed for API key.' })
+    })
+    const retry = noWait()
+    const result = await analyzeImage(
+      { image: TINY_PNG },
+      { ...PRODUCTION_ENV, TRACEDETECTOR_AI_FALLBACK_MODEL: 'fallback-model' },
+      { createClient, sleep: retry.sleep },
+    )
+
+    assert.equal(calls, 1)
+    assert.deepEqual(retry.delays, [])
+    assert.equal(result.status, 502)
+    assert.equal(result.body.error, 'ai_invalid_key')
+  }
+})
+
+test('invalid model HTTP 404 fails immediately without retry or fallback', async () => {
+  let calls = 0
+  const createClient = fakeClient(async () => {
+    calls += 1
+    throw new ApiError({ status: 404, message: 'Model not found.' })
+  })
+  const retry = noWait()
+  const result = await analyzeImage(
+    { image: TINY_PNG },
+    { ...PRODUCTION_ENV, TRACEDETECTOR_AI_FALLBACK_MODEL: 'fallback-model' },
+    { createClient, sleep: retry.sleep },
+  )
+
+  assert.equal(calls, 1)
+  assert.deepEqual(retry.delays, [])
   assert.equal(result.status, 502)
-  assert.ok(result.body.detail, 'expected a detail field in development')
-  assert.ok(result.body.detail.includes('HTTP 400'))
-  assert.ok(!result.body.detail.includes('super-secret-key'), 'the API key must always be redacted')
+  assert.equal(result.body.error, 'ai_model_unavailable')
+})
+
+test('malformed-request HTTP 400 fails immediately without retry or fallback', async () => {
+  let calls = 0
+  const createClient = fakeClient(async () => {
+    calls += 1
+    throw new ApiError({ status: 400, message: 'Invalid request format.' })
+  })
+  const retry = noWait()
+  const result = await analyzeImage(
+    { image: TINY_PNG },
+    { ...PRODUCTION_ENV, TRACEDETECTOR_AI_FALLBACK_MODEL: 'fallback-model' },
+    { createClient, sleep: retry.sleep },
+  )
+
+  assert.equal(calls, 1)
+  assert.deepEqual(retry.delays, [])
+  assert.equal(result.status, 502)
+  assert.equal(result.body.error, 'ai_request_failed')
+})
+
+test('provider messages, API keys, authorization text and image data never reach responses or logs', async () => {
+  const secret = 'super-secret-test-api-key'
+  const authValue = 'Bearer authorization-secret'
+  const sensitiveProviderMessage = `Rejected request. API key ${secret}; Authorization: ${authValue}; image=${TINY_PNG}`
+  const createClient = fakeClient(async () => {
+    throw geminiError(503, 'UNAVAILABLE', sensitiveProviderMessage)
+  })
+  const retry = noWait()
+  const capturedLogs = []
+  const originalWarn = console.warn
+  console.warn = (...args) =>
+    capturedLogs.push(args.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' '))
+
+  let result
+  try {
+    result = await analyzeImage(
+      { image: TINY_PNG },
+      { ...PRODUCTION_ENV, TRACEDETECTOR_AI_API_KEY: secret, NODE_ENV: 'development' },
+      { createClient, sleep: retry.sleep },
+    )
+  } finally {
+    console.warn = originalWarn
+  }
+
+  const externallyVisible = JSON.stringify(result.body)
+  const logs = capturedLogs.join('\n')
+  for (const sensitive of [secret, authValue, 'Authorization:', TINY_PNG, sensitiveProviderMessage]) {
+    assert.ok(!externallyVisible.includes(sensitive), `response leaked ${sensitive.slice(0, 20)}`)
+    assert.ok(!logs.includes(sensitive), `server log leaked ${sensitive.slice(0, 20)}`)
+  }
+  assert.equal(result.body.error, 'ai_provider_unavailable')
+  assert.ok(logs.includes('503'))
+  assert.ok(logs.includes('UNAVAILABLE'))
+})
+
+test('the browser uses only safe friendly errors, never raw provider messages', async () => {
+  const originalFetch = globalThis.fetch
+  try {
+    for (const payload of [
+      { error: 'ai_provider_unavailable', message: 'Provider error includes API key: browser-secret' },
+      { error: 'unrecognized_error', message: 'Authorization: Bearer browser-secret' },
+    ]) {
+      globalThis.fetch = async () => ({
+        ok: false,
+        json: async () => payload,
+      })
+
+      await assert.rejects(
+        requestAiAnalysis({ dataUrl: TINY_PNG, fileName: 'photo.png' }),
+        (error) => {
+          assert.equal(
+            error.message,
+            payload.error === 'ai_provider_unavailable'
+              ? FRIENDLY_ERRORS.ai_provider_unavailable
+              : FRIENDLY_ERRORS.ai_request_failed,
+          )
+          assert.ok(!error.message.includes('browser-secret'))
+          assert.ok(!error.message.includes('Authorization'))
+          return true
+        },
+      )
+    }
+  } finally {
+    globalThis.fetch = originalFetch
+  }
 })
 
 test('a malformed (non-JSON) Gemini reply is reported, never crashes the handler', async () => {
   const createClient = fakeClient(async () => ({ text: 'I cannot help with that request.' }))
-  const result = await analyzeImage({ image: TINY_PNG }, { TRACEDETECTOR_AI_API_KEY: 'k', NODE_ENV: 'production' }, { createClient })
+  const result = await analyzeImage({ image: TINY_PNG }, { ...PRODUCTION_ENV }, { createClient })
   assert.equal(result.status, 502)
   assert.equal(result.body.error, 'ai_malformed_json')
 })
 
 test('a prompt blocked by the provider is reported as 422, not a crash', async () => {
   const createClient = fakeClient(async () => ({ promptFeedback: { blockReason: 'SAFETY' } }))
-  const result = await analyzeImage({ image: TINY_PNG }, { TRACEDETECTOR_AI_API_KEY: 'k', NODE_ENV: 'production' }, { createClient })
+  const result = await analyzeImage({ image: TINY_PNG }, { ...PRODUCTION_ENV }, { createClient })
   assert.equal(result.status, 422)
   assert.equal(result.body.error, 'ai_blocked')
 })
 
-test('a network failure (no status code) is reported as ai_unreachable', async () => {
+test('a network failure (no status code) remains a single clean ai_unreachable error', async () => {
+  let calls = 0
   const createClient = fakeClient(async () => {
+    calls += 1
     throw new TypeError('fetch failed')
   })
-  const result = await analyzeImage({ image: TINY_PNG }, { TRACEDETECTOR_AI_API_KEY: 'k', NODE_ENV: 'production' }, { createClient })
+  const retry = noWait()
+  const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient, sleep: retry.sleep })
+
+  assert.equal(calls, 1)
+  assert.deepEqual(retry.delays, [])
   assert.equal(result.status, 502)
   assert.equal(result.body.error, 'ai_unreachable')
+})
+
+test('On-Device Scan and Demo Analysis still run without calling the AI backend', async () => {
+  const server = await createServer({
+    configFile: new URL('../vite.config.js', import.meta.url).pathname,
+    server: { middlewareMode: true },
+    appType: 'custom',
+  })
+  const originalFetch = globalThis.fetch
+  let fetchCalls = 0
+  globalThis.fetch = async () => {
+    fetchCalls += 1
+    throw new Error('unexpected network request')
+  }
+
+  try {
+    const { runAnalysis } = await server.ssrLoadModule('/src/services/analysisService.js')
+    const local = await runAnalysis({
+      mode: 'local',
+      file: { name: 'photo.png', size: 100, type: 'image/png' },
+      dataUrl: TINY_PNG,
+    })
+    const demo = await runAnalysis({ mode: 'demo' })
+
+    assert.equal(local.engine, 'local')
+    assert.ok(Array.isArray(local.checklist))
+    assert.equal(demo.engine, 'demo')
+    assert.ok(demo.findings.length > 0)
+    assert.ok(Array.isArray(demo.checklist))
+    assert.equal(fetchCalls, 0)
+  } finally {
+    globalThis.fetch = originalFetch
+    await server.close()
+  }
 })
