@@ -1,6 +1,12 @@
 import { GoogleGenAI } from '@google/genai'
 import { readAiConfig } from './config.js'
-import { SYSTEM_PROMPT, RESPONSE_SCHEMA_HINT, GEMINI_RESPONSE_SCHEMA } from './prompt.js'
+import {
+  SYSTEM_PROMPT,
+  RESPONSE_SCHEMA_HINT,
+  GEMINI_RESPONSE_SCHEMA,
+  MAX_FINDINGS,
+  REPORT_TEXT_LIMITS,
+} from './prompt.js'
 
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024 // 8 MB of raw image data, matches the client-side upload limit
 const ALLOWED_MIME = new Set([
@@ -11,8 +17,8 @@ const ALLOWED_MIME = new Set([
   'image/gif',
   'image/bmp',
 ])
-// Three 12s attempts plus 1s/2s backoffs on each of two models cap the worst
-// case near 78s, below the browser's 90s network and 95s UI timeouts.
+// Three 12s attempts plus 1s/2s backoffs for the single configured model cap
+// the worst case near 39s, below the browser's 90s network and UI timeouts.
 const REQUEST_TIMEOUT_MS = 12_000
 const MAX_REQUEST_ATTEMPTS = 3
 const RETRY_BACKOFF_MS = [1_000, 2_000]
@@ -75,9 +81,8 @@ export async function analyzeImage(body, env = process.env, deps = {}) {
   }
 
   const { mime, base64, fileName } = validation.value
-  // A fresh request object per attempt: primary retries and the fallback
-  // model all send an identical, valid structured-output configuration, and
-  // no attempt can observe mutations made by an earlier SDK call.
+  // A fresh request object per attempt: retries use only the configured model
+  // and the same structured-output configuration, without sharing mutations.
   const buildRequest = () => buildGeminiRequest({ mime, base64, fileName })
 
   let client
@@ -90,30 +95,11 @@ export async function analyzeImage(body, env = process.env, deps = {}) {
 
   const wait = deps.sleep || sleep
   let response
-  let model = config.model
 
   try {
-    response = await generateContentWithRetries(client, model, buildRequest, { wait, dev })
-  } catch (primaryError) {
-    const canUseFallback =
-      isTransientProviderError(primaryError) &&
-      config.fallbackModel &&
-      config.fallbackModel !== config.model
-
-    if (!canUseFallback) {
-      return providerErrorResponse(primaryError)
-    }
-
-    if (dev) {
-      logServerError('Primary model retries exhausted; trying configured fallback', getProviderFailureInfo(primaryError))
-    }
-
-    model = config.fallbackModel
-    try {
-      response = await generateContentWithRetries(client, model, buildRequest, { wait, dev })
-    } catch (fallbackError) {
-      return providerErrorResponse(fallbackError)
-    }
+    response = await generateContentWithRetries(client, config.model, buildRequest, { wait, dev })
+  } catch (providerError) {
+    return providerErrorResponse(providerError)
   }
 
   const blockReason = response?.promptFeedback?.blockReason
@@ -139,7 +125,9 @@ export async function analyzeImage(body, env = process.env, deps = {}) {
   }
 
   const content = extractModelText(response)
-  const parsed = parseModelJson(content)
+  // Never salvage a response explicitly stopped at its output-token limit,
+  // even if it contains a parseable-looking JSON span.
+  const parsed = finishReason === 'MAX_TOKENS' ? null : parseModelJson(content)
 
   // The structured-output contract requires a report object carrying a
   // findings array. Anything else — wrong-shaped JSON, a bare array, a
@@ -169,7 +157,7 @@ export async function analyzeImage(body, env = process.env, deps = {}) {
     status: 200,
     body: {
       engine: 'ai',
-      model,
+      model: config.model,
       report: normaliseReport(parsed),
     },
   }
@@ -179,7 +167,7 @@ export async function analyzeImage(body, env = process.env, deps = {}) {
  * Builds the Gemini generateContent payload: native multimodal image input
  * plus the enforced structured-output configuration (application/json
  * constrained by the TraceDetector response schema). Called fresh for every
- * attempt so primary retries and the fallback model always send the same
+ * attempt so retries for the single configured model always send the same
  * valid configuration.
  */
 function buildGeminiRequest({ mime, base64, fileName }) {
@@ -207,7 +195,7 @@ function buildGeminiRequest({ mime, base64, fileName }) {
         timeout: REQUEST_TIMEOUT_MS,
         // The SDK defaults to five attempts with backoff up to 60 seconds.
         // Set one SDK attempt so our own small, explicit retry budget controls
-        // total latency and fallback timing.
+        // total latency and retry timing.
         retryOptions: {
           attempts: 1,
           httpStatusCodes: RETRYABLE_HTTP_STATUS_CODES,
@@ -358,10 +346,6 @@ function getProviderFailureInfo(err) {
       : TRANSIENT_PROVIDER_STATUSES.has(providerStatus) || timedOut
 
   return { httpStatus, providerStatus, transient }
-}
-
-function isTransientProviderError(err) {
-  return getProviderFailureInfo(err).transient
 }
 
 function extractHttpStatus(err) {
@@ -527,8 +511,9 @@ export function parseModelJson(content) {
     if (inner && inner !== text && !candidates.includes(inner)) candidates.push(inner)
   }
 
-  // Last resort: the outermost brace span (handles prose around JSON and
-  // unclosed fences from truncated output that still happens to be complete).
+  // Last resort: the outermost brace span handles prose or formatting around
+  // a complete JSON object. JSON.parse must still accept the entire span, and
+  // MAX_TOKENS responses are rejected by analyzeImage before this is called.
   const first = text.indexOf('{')
   const last = text.lastIndexOf('}')
   if (first !== -1 && last > first) {
@@ -569,27 +554,27 @@ export function normaliseReport(raw) {
     .filter((f) => f && typeof f === 'object')
     // A finding must name something; empty objects are hallucination noise.
     .filter((f) => str(f.type, 80) || str(f.description, 400))
-    .slice(0, 40)
+    .slice(0, MAX_FINDINGS)
     .map((f) => {
       const severity = String(f.severity || '').toLowerCase()
       return {
         category: CATEGORIES.has(String(f.category || '').toLowerCase())
           ? String(f.category).toLowerCase()
           : 'other',
-        type: str(f.type, 80) || 'Potentially sensitive content',
+        type: str(f.type, REPORT_TEXT_LIMITS.findingType) || 'Potentially sensitive content',
         severity: SEVERITIES.has(severity) ? severity : 'medium',
         confidence: clamp01(typeof f.confidence === 'number' ? f.confidence : 0.6),
-        description: str(f.description, 400),
-        evidence: str(f.evidence, 160),
-        locationHint: str(f.locationHint, 120),
+        description: str(f.description, REPORT_TEXT_LIMITS.findingDescription),
+        evidence: str(f.evidence, REPORT_TEXT_LIMITS.findingEvidence),
+        locationHint: str(f.locationHint, REPORT_TEXT_LIMITS.findingLocation),
         box: normaliseBox(f.box),
       }
     })
 
   return {
-    summary: str(raw.summary, 600),
+    summary: str(raw.summary, REPORT_TEXT_LIMITS.summary),
     imageKind: str(raw.imageKind, 40).toLowerCase() || 'other',
-    extractedText: str(raw.extractedText, 6000),
+    extractedText: str(raw.extractedText, REPORT_TEXT_LIMITS.extractedText),
     findings,
   }
 }

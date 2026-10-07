@@ -49,29 +49,42 @@ Rules — follow these strictly:
 - Do not speculate about what might be hidden, cropped out, or implied beyond the pixels you can see.
 - Never reproduce a full secret, full card number, or full ID number in your output. Redact the middle (e.g. "john****@acme.com", "**** **** **** 4412", "sk_live_****").
 - If the image is clean, return an empty findings array. An empty result is a valid, useful answer.
+- Return no more than five distinct findings. Prioritise the most serious risks and combine repeated instances of the same issue.
+- Keep the summary to one short sentence. For each finding, use a short label, one concise sentence describing the risk, and only a brief redacted evidence excerpt. Do not add reasoning, recommendations, or other explanations.
+- In extractedText, include only short, relevant redacted excerpts that support findings. Do not transcribe all legible text or describe the image again.
 - Bounding boxes are NORMALISED floats from 0 to 1 relative to the full image: x and y are the top-left corner, w and h the size. Only include a box when you can genuinely localise the item; otherwise set "box" to null.
 - Be concise, conservative and practical. The user is deciding whether it is safe to hit "share".
 - Respond only with the JSON described below — no prose, no markdown fence, no commentary.`
 
-export const RESPONSE_SCHEMA_HINT = `Respond with ONLY valid JSON (no markdown fence) matching:
+export const RESPONSE_SCHEMA_HINT = `Respond with ONLY valid JSON (no markdown fence) matching the schema below. Limit findings to the five highest-priority distinct issues, and keep every field concise. Do not provide extra explanations.
 
 {
-  "summary": "one or two sentences describing what the image shows and the overall privacy situation",
+  "summary": "one short sentence about the overall privacy situation",
   "imageKind": "screenshot | photo | document | id-card | chat | code | dashboard | other",
-  "extractedText": "all legible text you can read in the image, redacted where it is a secret. Empty string if none.",
+  "extractedText": "brief, relevant redacted excerpts only; do not transcribe all image text",
   "findings": [
     {
       "category": "personal-information | contact | location | identifier | credential | code | workplace | metadata | other",
       "type": "short label, e.g. Email Address",
       "severity": "critical | high | medium | low",
       "confidence": 0.0,
-      "description": "what was found and why it is a risk, one or two sentences",
-      "evidence": "short redacted excerpt, or empty string",
-      "locationHint": "human readable location, e.g. top-right corner of the screenshot",
+      "description": "one concise sentence stating the risk",
+      "evidence": "brief redacted excerpt, or empty string",
+      "locationHint": "short human-readable location",
       "box": { "x": 0.0, "y": 0.0, "w": 0.0, "h": 0.0 }
     }
   ]
 }`
+
+export const MAX_FINDINGS = 5
+export const REPORT_TEXT_LIMITS = Object.freeze({
+  summary: 180,
+  extractedText: 1_000,
+  findingType: 80,
+  findingDescription: 240,
+  findingEvidence: 120,
+  findingLocation: 100,
+})
 
 /**
  * A constrained string field for Gemini's schema format.
@@ -90,11 +103,12 @@ function stringEnum(values) {
 export const GEMINI_RESPONSE_SCHEMA = {
   type: Type.OBJECT,
   properties: {
-    summary: { type: Type.STRING },
+    summary: { type: Type.STRING, maxLength: String(REPORT_TEXT_LIMITS.summary) },
     imageKind: stringEnum(['screenshot', 'photo', 'document', 'id-card', 'chat', 'code', 'dashboard', 'other']),
-    extractedText: { type: Type.STRING },
+    extractedText: { type: Type.STRING, maxLength: String(REPORT_TEXT_LIMITS.extractedText) },
     findings: {
       type: Type.ARRAY,
+      maxItems: String(MAX_FINDINGS),
       items: {
         type: Type.OBJECT,
         properties: {
@@ -109,12 +123,12 @@ export const GEMINI_RESPONSE_SCHEMA = {
             'metadata',
             'other',
           ]),
-          type: { type: Type.STRING },
+          type: { type: Type.STRING, maxLength: String(REPORT_TEXT_LIMITS.findingType) },
           severity: stringEnum(['critical', 'high', 'medium', 'low']),
           confidence: { type: Type.NUMBER },
-          description: { type: Type.STRING },
-          evidence: { type: Type.STRING },
-          locationHint: { type: Type.STRING },
+          description: { type: Type.STRING, maxLength: String(REPORT_TEXT_LIMITS.findingDescription) },
+          evidence: { type: Type.STRING, maxLength: String(REPORT_TEXT_LIMITS.findingEvidence) },
+          locationHint: { type: Type.STRING, maxLength: String(REPORT_TEXT_LIMITS.findingLocation) },
           box: {
             type: Type.OBJECT,
             nullable: true,

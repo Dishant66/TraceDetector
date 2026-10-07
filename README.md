@@ -90,19 +90,14 @@ needed if you want the real AI-powered engine instead of On-Device Scan / Demo A
    ```ini
    TRACEDETECTOR_AI_API_KEY=your-key-here
    ```
-4. **Configure the models if necessary.** The primary model defaults to
+4. **Configure the single model if necessary.** The model defaults to
    `gemini-3.8-flash`; set `TRACEDETECTOR_AI_MODEL` explicitly if your account needs a
-   different Gemini vision-capable model id. An optional `TRACEDETECTOR_AI_FALLBACK_MODEL`
-   is attempted only after the primary model exhausts bounded retries for temporary
-   provider failures (such as HTTP 503/504). Leave it blank to disable fallback. Permanent
-   errors such as authentication failures, invalid models and malformed requests are not
-   retried or sent to the fallback model. For example:
+   different Gemini vision-capable model id. Transient provider errors (HTTP 429/500/502/503/504)
+   are retried up to two times, always using that same model. Permanent errors such as
+   authentication failures, invalid models and malformed requests are not retried. For example:
    ```ini
    TRACEDETECTOR_AI_MODEL=gemini-3.8-flash
-   TRACEDETECTOR_AI_FALLBACK_MODEL=
    ```
-   (`GEMINI_API_KEY` / `GEMINI_MODEL` are also read as a fallback, but
-   `TRACEDETECTOR_AI_API_KEY` / `TRACEDETECTOR_AI_MODEL` take precedence.)
 5. **Run the dev server:**
    ```bash
    npm run dev
@@ -220,7 +215,7 @@ rules. The only runtime dependencies are `react` and `react-dom`.
 Every failure path ends somewhere useful, never on a spinner: unsupported type, oversized
 file (>8 MB), empty or corrupt upload, undecodable image, provider unreachable, HTTP error,
 timeout (client-side hard stop), and malformed model JSON. AI failures offer a one-click
-fallback to On-Device Scan, a retry, or the demo.
+switch to On-Device Scan, a retry, or Demo Analysis.
 
 ## Limitations
 

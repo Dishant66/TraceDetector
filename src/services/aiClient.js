@@ -7,7 +7,7 @@
  */
 
 const STATUS_TIMEOUT_MS = 6000
-// Leaves room for the server's bounded primary/fallback retry budget.
+// Leaves room for the server's bounded three-attempt single-model retry budget.
 const ANALYZE_TIMEOUT_MS = 90_000
 
 export const FRIENDLY_ERRORS = {
