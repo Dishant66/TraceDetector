@@ -7,7 +7,8 @@
  */
 
 const STATUS_TIMEOUT_MS = 6000
-const ANALYZE_TIMEOUT_MS = 70_000
+// Leaves room for the server's bounded primary/fallback retry budget.
+const ANALYZE_TIMEOUT_MS = 90_000
 
 export const FRIENDLY_ERRORS = {
   ai_not_configured: 'AI Analysis requires a Gemini API key. Use On-Device Scan or Demo Analysis instead.',
@@ -16,6 +17,7 @@ export const FRIENDLY_ERRORS = {
   ai_invalid_key: 'AI analysis is temporarily unavailable. Try On-Device Scan or Demo Analysis.',
   ai_rate_limited: 'AI analysis is temporarily unavailable (rate limit reached). Try again shortly, or use On-Device Scan or Demo Analysis.',
   ai_model_unavailable: 'AI analysis is temporarily unavailable. Try On-Device Scan or Demo Analysis.',
+  ai_provider_unavailable: 'AI analysis is temporarily unavailable. Please try again in a moment.',
   ai_blocked: 'Gemini declined to analyse this image. Try a different image, or use On-Device Scan or Demo Analysis.',
   ai_request_failed: 'AI analysis is temporarily unavailable. Try On-Device Scan or Demo Analysis.',
   ai_bad_response: 'AI analysis is temporarily unavailable. Try On-Device Scan or Demo Analysis.',
@@ -72,7 +74,8 @@ export async function requestAiAnalysis({ dataUrl, fileName }) {
 
   if (!response.ok) {
     const code = payload?.error || 'ai_request_failed'
-    throw annotate(new Error(FRIENDLY_ERRORS[code] || payload?.message || FRIENDLY_ERRORS.ai_request_failed), code)
+    // Never surface an unknown backend/provider message directly in the UI.
+    throw annotate(new Error(FRIENDLY_ERRORS[code] || FRIENDLY_ERRORS.ai_request_failed), code)
   }
 
   if (!payload?.report || !Array.isArray(payload.report.findings)) {
