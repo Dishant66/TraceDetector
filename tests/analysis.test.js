@@ -341,8 +341,9 @@ test('a successful Gemini call is converted into TraceDetector\u2019s structured
     assert.ok(imagePart, 'expected an inlineData part carrying the image')
     assert.equal(imagePart.inlineData.mimeType, 'image/png')
     assert.equal(request.config.responseMimeType, 'application/json')
-    assert.equal(request.config.httpOptions.timeout, 12_000)
+    assert.equal(request.config.httpOptions.timeout, 20_000)
     assert.equal(request.config.httpOptions.retryOptions.attempts, 1, 'SDK retries must not compound our retry budget')
+    assert.deepEqual(request.config.thinkingConfig, { thinkingBudget: 0 }, 'thinking must be disabled for image classification')
     assert.equal(request.model, 'gemini-3.8-flash')
     return { text: modelJson, promptFeedback: undefined }
   })
@@ -416,7 +417,7 @@ test('Gemini retries HTTP 503 once, then returns the normalized report', async (
   const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient, sleep: retry.sleep })
 
   assert.equal(calls, 2)
-  assert.deepEqual(retry.delays, [1_000])
+  assert.deepEqual(retry.delays, [2_000])
   assert.equal(result.status, 200)
   assert.equal(result.body.report.summary, 'A clear image with no visible privacy findings.')
   assert.ok(Array.isArray(result.body.report.findings))
@@ -433,7 +434,7 @@ test('Gemini retries HTTP 504 DEADLINE_EXCEEDED once, then succeeds', async () =
   const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient, sleep: retry.sleep })
 
   assert.equal(calls, 2)
-  assert.deepEqual(retry.delays, [1_000])
+  assert.deepEqual(retry.delays, [2_000])
   assert.equal(result.status, 200)
 })
 
@@ -450,7 +451,7 @@ test('the other configured transient HTTP statuses are retried', async () => {
 
     assert.equal(result.status, 200, `HTTP ${status} should recover on retry`)
     assert.equal(calls, 2)
-    assert.deepEqual(retry.delays, [1_000])
+    assert.deepEqual(retry.delays, [2_000])
   }
 })
 
@@ -470,7 +471,7 @@ test('Gemini symbolic UNAVAILABLE status is retried even without a numeric HTTP 
   const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient, sleep: retry.sleep })
 
   assert.equal(calls, 2)
-  assert.deepEqual(retry.delays, [1_000])
+  assert.deepEqual(retry.delays, [2_000])
   assert.equal(result.status, 200)
 })
 
@@ -484,7 +485,7 @@ test('repeated HTTP 503 failures stop after three bounded attempts', async () =>
   const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient, sleep: retry.sleep })
 
   assert.equal(calls, 3)
-  assert.deepEqual(retry.delays, [1_000, 2_000])
+  assert.deepEqual(retry.delays, [2_000, 4_000])
   assert.equal(result.status, 503)
   assert.equal(result.body.error, 'ai_provider_unavailable')
   assert.equal(result.body.message, 'AI analysis is temporarily unavailable. Please try again in a moment.')
@@ -500,7 +501,7 @@ test('repeated HTTP 504 failures stop after three bounded attempts', async () =>
   const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, { createClient, sleep: retry.sleep })
 
   assert.equal(calls, 3)
-  assert.deepEqual(retry.delays, [1_000, 2_000])
+  assert.deepEqual(retry.delays, [2_000, 4_000])
   assert.equal(result.status, 503)
   assert.equal(result.body.error, 'ai_provider_unavailable')
 })
@@ -518,7 +519,7 @@ test('transient failures retry only the configured model and stop after three at
   })
 
   assert.deepEqual(models, Array(3).fill(PRODUCTION_ENV.TRACEDETECTOR_AI_MODEL))
-  assert.deepEqual(retry.delays, [1_000, 2_000])
+  assert.deepEqual(retry.delays, [2_000, 4_000])
   assert.equal(result.status, 503)
   assert.equal(result.body.error, 'ai_provider_unavailable')
   assert.equal(result.body.detail, undefined)
@@ -764,7 +765,7 @@ test('transient retries reuse the configured model and strict structured-output 
   })
 
   assert.deepEqual(models, Array(3).fill(PRODUCTION_ENV.TRACEDETECTOR_AI_MODEL))
-  assert.deepEqual(retry.delays, [1_000, 2_000])
+  assert.deepEqual(retry.delays, [2_000, 4_000])
   assert.equal(result.status, 200)
   assert.equal(result.body.model, PRODUCTION_ENV.TRACEDETECTOR_AI_MODEL)
   assert.equal(configs.length, 3)
@@ -912,7 +913,7 @@ test('HTTP 504 can recover on the last retry using the same configured model', a
   })
 
   assert.deepEqual(models, Array(3).fill(PRODUCTION_ENV.TRACEDETECTOR_AI_MODEL))
-  assert.deepEqual(retry.delays, [1_000, 2_000])
+  assert.deepEqual(retry.delays, [2_000, 4_000])
   assert.equal(result.status, 200)
   assert.equal(result.body.model, PRODUCTION_ENV.TRACEDETECTOR_AI_MODEL)
 })

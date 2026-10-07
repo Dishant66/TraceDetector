@@ -17,11 +17,12 @@ const ALLOWED_MIME = new Set([
   'image/gif',
   'image/bmp',
 ])
-// Three 12s attempts plus 1s/2s backoffs for the single configured model cap
-// the worst case near 39s, below the browser's 90s network and UI timeouts.
-const REQUEST_TIMEOUT_MS = 12_000
+// Three 20s attempts plus 2s/4s exponential backoffs for the single configured
+// model cap the worst case near 66s, below the browser's 90s network and UI
+// timeouts.
+const REQUEST_TIMEOUT_MS = 20_000
 const MAX_REQUEST_ATTEMPTS = 3
-const RETRY_BACKOFF_MS = [1_000, 2_000]
+const RETRY_BACKOFF_MS = [2_000, 4_000]
 const RETRYABLE_HTTP_STATUS_CODES = [429, 500, 502, 503, 504]
 const RETRYABLE_HTTP_STATUS_SET = new Set(RETRYABLE_HTTP_STATUS_CODES)
 const TRANSIENT_PROVIDER_STATUSES = new Set(['UNAVAILABLE', 'RESOURCE_EXHAUSTED', 'DEADLINE_EXCEEDED'])
@@ -191,6 +192,11 @@ function buildGeminiRequest({ mime, base64, fileName }) {
       maxOutputTokens: 2048,
       responseMimeType: 'application/json',
       responseSchema: GEMINI_RESPONSE_SCHEMA,
+      // Gemini 3.x models enable thinking/reasoning by default. This image
+      // classification task does not benefit from chain-of-thought reasoning,
+      // and the extra thinking tokens increase latency, consume output-token
+      // budget, and trigger 503/504 timeouts. Explicitly disable thinking.
+      thinkingConfig: { thinkingBudget: 0 },
       httpOptions: {
         timeout: REQUEST_TIMEOUT_MS,
         // The SDK defaults to five attempts with backoff up to 60 seconds.
