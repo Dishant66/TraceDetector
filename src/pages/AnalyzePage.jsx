@@ -195,7 +195,8 @@ export default function AnalyzePage({ aiStatus, demoRequest = 0, onDemoStarted }
           <div className="notice notice-error analyze-alert" role="alert">
             <Icon name="alert" size={17} />
             <div>
-              <strong>Analysis could not continue.</strong> {error.message}
+              <strong>Analysis could not continue.</strong>{' '}
+              <span className="analyze-alert-message">{error.message}</span>
               <div className="notice-actions">
                 {image && engine !== 'local' && (
                   <button

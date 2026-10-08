@@ -17,7 +17,14 @@ export const FRIENDLY_ERRORS = {
   ai_invalid_key: 'AI analysis is temporarily unavailable. Try On-Device Scan or Demo Analysis.',
   ai_rate_limited: 'AI analysis is temporarily unavailable (rate limit reached). Try again shortly, or use On-Device Scan or Demo Analysis.',
   ai_model_unavailable: 'AI analysis is temporarily unavailable. Try On-Device Scan or Demo Analysis.',
-  ai_provider_unavailable: 'AI analysis is temporarily unavailable. Please try again in a moment.',
+  // Shown after the server has exhausted its bounded retries on transient
+  // Gemini failures (503/504, DEADLINE_EXCEEDED, UNAVAILABLE). The copy is
+  // deliberately generic: it must not claim "high usage" (the provider error
+  // may not say that) and must never carry status codes, provider statuses,
+  // attempt numbers or other technical detail. Rendered with pre-line so the
+  // blank line between the heading and the explanation is preserved.
+  ai_provider_unavailable:
+    'AI analysis is temporarily unavailable.\n\nThe AI service is currently busy or taking too long to respond. Please try again in a moment.',
   ai_blocked: 'Gemini declined to analyse this image. Try a different image, or use On-Device Scan or Demo Analysis.',
   ai_request_failed: 'AI analysis is temporarily unavailable. Try On-Device Scan or Demo Analysis.',
   ai_bad_response: 'AI analysis is temporarily unavailable. Try On-Device Scan or Demo Analysis.',

@@ -16,6 +16,11 @@
 .analyze-alert strong {
   display: inline;
 }
+/* Error copy may carry intentional paragraph breaks (e.g. the transient
+   AI-outage message); render them instead of collapsing to one line. */
+.analyze-alert-message {
+  white-space: pre-line;
+}
 
 /* ============================= layout ================================ */
 
