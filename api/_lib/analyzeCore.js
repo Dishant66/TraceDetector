@@ -291,11 +291,18 @@ function providerErrorResponse(err) {
   const failure = getProviderFailureInfo(err)
 
   if (failure.transient) {
+    // All retries failed on a transient provider error (503/504,
+    // DEADLINE_EXCEEDED, UNAVAILABLE). The body carries only a stable error
+    // code plus clean, generic user-facing copy — never HTTP statuses,
+    // provider statuses, attempt numbers or raw provider messages. The
+    // browser maps the code to its own friendly text and never displays this
+    // message verbatim; it exists so any API consumer gets the same clean copy.
     return {
       status: 503,
       body: {
         error: 'ai_provider_unavailable',
-        message: 'AI analysis is temporarily unavailable. Please try again in a moment.',
+        message:
+          'AI analysis is temporarily unavailable.\n\nThe AI service is currently busy or taking too long to respond. Please try again in a moment.',
       },
     }
   }

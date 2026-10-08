@@ -390,6 +390,12 @@ const PRODUCTION_ENV = {
   NODE_ENV: 'production',
 }
 
+// The exact user-facing copy shown when every retry fails on a transient
+// provider error. Pinned here so a careless edit cannot leak technical
+// detail (status codes, provider statuses, attempt numbers) into the UI.
+const EXPECTED_PROVIDER_UNAVAILABLE_MESSAGE =
+  'AI analysis is temporarily unavailable.\n\nThe AI service is currently busy or taking too long to respond. Please try again in a moment.'
+
 test('Gemini succeeds on its first attempt without waiting', async () => {
   let calls = 0
   const createClient = fakeClient(async () => {
@@ -488,7 +494,7 @@ test('repeated HTTP 503 failures stop after three bounded attempts', async () =>
   assert.deepEqual(retry.delays, [2_000, 4_000])
   assert.equal(result.status, 503)
   assert.equal(result.body.error, 'ai_provider_unavailable')
-  assert.equal(result.body.message, 'AI analysis is temporarily unavailable. Please try again in a moment.')
+  assert.equal(result.body.message, EXPECTED_PROVIDER_UNAVAILABLE_MESSAGE)
 })
 
 test('repeated HTTP 504 failures stop after three bounded attempts', async () => {
@@ -648,6 +654,158 @@ test('the browser uses only safe friendly errors, never raw provider messages', 
     }
   } finally {
     globalThis.fetch = originalFetch
+  }
+})
+
+/* ------- user-facing mapping for exhausted transient provider retries ---- */
+
+// Technical tokens that must never appear in anything the user can see.
+const TECHNICAL_TOKENS = [
+  '503',
+  '504',
+  'UNAVAILABLE',
+  'DEADLINE_EXCEEDED',
+  'RESOURCE_EXHAUSTED',
+  'attempt',
+  'providerStatus',
+  'httpStatus',
+  'Error:',
+  'at Object',
+  'stack',
+]
+
+test('every transient Gemini failure class exhausts three attempts and returns the exact clean user-facing error', async () => {
+  const transientFailures = [
+    ['HTTP 503 UNAVAILABLE', () => geminiError(503, 'UNAVAILABLE')],
+    ['HTTP 504 DEADLINE_EXCEEDED', () => geminiError(504, 'DEADLINE_EXCEEDED')],
+    [
+      'symbolic UNAVAILABLE without an HTTP status',
+      () =>
+        new ApiError({
+          status: 'UNAVAILABLE',
+          message: JSON.stringify({ error: { status: 'UNAVAILABLE', message: 'backend unavailable' } }),
+        }),
+    ],
+    [
+      'symbolic DEADLINE_EXCEEDED without an HTTP status',
+      () =>
+        new ApiError({
+          status: 'DEADLINE_EXCEEDED',
+          message: JSON.stringify({ error: { status: 'DEADLINE_EXCEEDED', message: 'deadline exceeded' } }),
+        }),
+    ],
+  ]
+
+  for (const [name, makeError] of transientFailures) {
+    let calls = 0
+    const createClient = fakeClient(async () => {
+      calls += 1
+      throw makeError()
+    })
+    const retry = noWait()
+    const result = await analyzeImage({ image: TINY_PNG }, PRODUCTION_ENV, {
+      createClient,
+      sleep: retry.sleep,
+    })
+
+    // The retry budget is unchanged: exactly three attempts, same backoffs.
+    assert.equal(calls, 3, `${name}: expected exactly three attempts`)
+    assert.deepEqual(retry.delays, [2_000, 4_000], `${name}: backoff schedule must not change`)
+
+    // The user-facing error is the exact clean copy, free of technical detail.
+    assert.equal(result.status, 503, `${name}: client receives a clean 503`)
+    assert.equal(result.body.error, 'ai_provider_unavailable', `${name}: stable error code`)
+    assert.equal(result.body.message, EXPECTED_PROVIDER_UNAVAILABLE_MESSAGE, `${name}: exact user copy`)
+    assert.equal(result.body.detail, undefined, `${name}: no detail field`)
+    const bodyText = JSON.stringify(result.body)
+    for (const token of TECHNICAL_TOKENS) {
+      assert.ok(!bodyText.includes(token), `${name}: response must not contain "${token}"`)
+    }
+  }
+})
+
+test('exhausted retries keep detailed per-attempt logs in the server terminal while the response stays clean', async () => {
+  let calls = 0
+  const createClient = fakeClient(async () => {
+    calls += 1
+    throw geminiError(503, 'UNAVAILABLE', 'secret raw provider detail')
+  })
+  const retry = noWait()
+  const capturedLogs = []
+  const originalWarn = console.warn
+  console.warn = (...args) =>
+    capturedLogs.push(args.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' '))
+
+  let result
+  try {
+    result = await analyzeImage(
+      { image: TINY_PNG },
+      { ...PRODUCTION_ENV, NODE_ENV: 'development' },
+      { createClient, sleep: retry.sleep },
+    )
+  } finally {
+    console.warn = originalWarn
+  }
+
+  // Server/terminal keeps the internal retry detail for debugging…
+  assert.equal(calls, 3, 'exactly three attempts were made')
+  const logs = capturedLogs.join('\n')
+  for (const attempt of [1, 2, 3]) {
+    assert.ok(logs.includes(`attempt ${attempt} failed`), `terminal log should keep "attempt ${attempt} failed"`)
+  }
+  assert.ok(logs.includes('503') && logs.includes('UNAVAILABLE'), 'terminal log keeps whitelisted status metadata')
+  assert.ok(!logs.includes('secret raw provider detail'), 'terminal log must not echo the raw provider message')
+
+  // …while the user-facing response never sees any of it.
+  assert.equal(result.status, 503)
+  assert.equal(result.body.error, 'ai_provider_unavailable')
+  assert.equal(result.body.message, EXPECTED_PROVIDER_UNAVAILABLE_MESSAGE)
+  const bodyText = JSON.stringify(result.body)
+  for (const token of ['attempt', '503', 'UNAVAILABLE', 'secret raw provider detail']) {
+    assert.ok(!bodyText.includes(token), `response leaked "${token}"`)
+  }
+})
+
+test('the browser maps an exhausted-retry response to the exact two-line user message, never the server detail', async () => {
+  const originalFetch = globalThis.fetch
+  try {
+    globalThis.fetch = async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({
+        error: 'ai_provider_unavailable',
+        // Poisoned server-side detail: none of this may reach the UI.
+        message:
+          'Upstream failed on attempt 3 of 3: 503 UNAVAILABLE (DEADLINE_EXCEEDED) at Object.generateContent (analyzeCore.js:221)\nError: socket hang up',
+      }),
+    })
+
+    await assert.rejects(
+      requestAiAnalysis({ dataUrl: TINY_PNG, fileName: 'photo.png' }),
+      (error) => {
+        assert.equal(error.code, 'ai_provider_unavailable')
+        assert.equal(error.message, EXPECTED_PROVIDER_UNAVAILABLE_MESSAGE)
+        assert.equal(error.message, FRIENDLY_ERRORS.ai_provider_unavailable)
+        // The message is exactly the two prescribed paragraphs.
+        assert.deepEqual(error.message.split('\n\n'), [
+          'AI analysis is temporarily unavailable.',
+          'The AI service is currently busy or taking too long to respond. Please try again in a moment.',
+        ])
+        for (const token of TECHNICAL_TOKENS) {
+          assert.ok(!error.message.includes(token), `UI message leaked "${token}"`)
+        }
+        return true
+      },
+    )
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('the transient-outage copy never claims high usage unless the provider error says so', () => {
+  const message = FRIENDLY_ERRORS.ai_provider_unavailable.toLowerCase()
+  for (const claim of ['high usage', 'high demand', 'too many users', 'overloaded', 'usage limits', 'quota']) {
+    assert.ok(!message.includes(claim), `user copy must not claim "${claim}" without provider evidence`)
   }
 })
 
